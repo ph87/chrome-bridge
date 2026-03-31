@@ -3,6 +3,8 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 
+const { createAgentBridge, loadAgentRegistryFromEnv } = require('./agents');
+
 const HOST_BIND = process.env.CHROME_BRIDGE_BIND || '127.0.0.1';
 const HOST_PORT = Number(process.env.CHROME_BRIDGE_PORT || 3456);
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 60000);
@@ -26,6 +28,14 @@ function sendNative(message) {
   process.stdout.write(body);
   pushEvent('native_out', { type: message.type || null, taskId: message.taskId || null });
 }
+
+const AGENT_REGISTRY = loadAgentRegistryFromEnv();
+const agentBridge = createAgentBridge({
+  agentRegistry: AGENT_REGISTRY,
+  onEvent: (event) => {
+    sendNative({ type: 'chat_event', ...event });
+  }
+});
 
 function resolvePending(taskId, payload) {
   const pending = pendingByTaskId.get(taskId);
@@ -53,6 +63,20 @@ function handleNativeMessage(message) {
 
   if (message?.type === 'execution_result' && message?.taskId) {
     resolvePending(message.taskId, message);
+    return;
+  }
+
+  if (message?.type === 'chat_user_message') {
+    void agentBridge.handleUserMessage({
+      tabId: message?.tabId,
+      agentId: message?.agentId,
+      text: message?.text
+    });
+    return;
+  }
+
+  if (message?.type === 'chat_close') {
+    agentBridge.closeSession(message?.tabId, 'closed_by_extension');
   }
 }
 
@@ -77,6 +101,7 @@ process.stdin.on('data', (chunk) => {
 
 process.stdin.on('end', () => {
   pushEvent('stdin_end');
+  agentBridge.closeAllSessions('native_pipe_ended');
   rejectAllPending('Native messaging pipe ended');
   process.exit(0);
 });
@@ -134,7 +159,8 @@ const server = http.createServer(async (req, res) => {
         bind: HOST_BIND,
         port: HOST_PORT,
         extensionConnected,
-        pendingTasks: pendingByTaskId.size
+        pendingTasks: pendingByTaskId.size,
+        chatSessions: agentBridge.getSessionCount()
       });
       return;
     }
@@ -181,5 +207,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(HOST_PORT, HOST_BIND, () => {
   pushEvent('host_start', { bind: HOST_BIND, port: HOST_PORT });
+  pushEvent('agent_registry_loaded', { agentIds: agentBridge.getAgentIds() });
   console.error(`[native-host] listening on http://${HOST_BIND}:${HOST_PORT}`);
 });
