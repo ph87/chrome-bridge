@@ -3,7 +3,7 @@
   "name": "Chrome Bridge Skill",
   "version": "1.0.0",
   "description": "Runs JavaScript on pages via native messaging bridge.",
-  "permissions": ["nativeMessaging", "scripting", "tabs", "activeTab", "debugger"],
+  "permissions": ["nativeMessaging", "scripting", "tabs", "activeTab", "debugger", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "backgroud.js"

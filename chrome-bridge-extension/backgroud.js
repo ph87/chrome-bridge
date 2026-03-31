@@ -1,12 +1,144 @@
 const NATIVE_HOST_NAME = 'com.argentum.chrome_bridge';
+const SIDEBAR_SCRIPT_FILE = 'sidebar.js';
+importScripts('runtime-config.js', 'commands/index.js');
+
+const runtimeConfig = globalThis.ChromeBridgeRuntimeConfig || {};
+const DEFAULT_AGENT_ID = String(runtimeConfig.defaultAgentId || '').trim();
+const AUTO_CONTEXT_ENABLED = runtimeConfig.autoContextEnabled !== false;
 
 let nativePort = null;
 let reconnectTimer = null;
+const persistentChatContextByTabId = new Map();
 
 connectNativeHost();
 chrome.runtime.onStartup.addListener(connectNativeHost);
 chrome.runtime.onInstalled.addListener(connectNativeHost);
-chrome.action.onClicked.addListener(connectNativeHost);
+chrome.action.onClicked.addListener(handleActionClick);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  handleRuntimeMessage(message, sender)
+    .then((result) => sendResponse({ ok: true, ...(result || {}) }))
+    .catch((error) => {
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  return true;
+});
+
+async function handleActionClick(tab) {
+  connectNativeHost();
+  const tabId = tab?.id;
+  if (tabId == null) return;
+
+  try {
+    await ensureSidebarScriptInjected(tabId);
+    await chrome.tabs.sendMessage(tabId, { type: 'bridge_toggle_sidebar' });
+  } catch (error) {
+    console.warn('[chrome-bridge] failed to toggle sidebar', error);
+  }
+}
+
+async function ensureSidebarScriptInjected(tabId) {
+  try {
+    const pong = await chrome.tabs.sendMessage(tabId, { type: 'bridge_sidebar_ping' });
+    if (pong?.ok) return;
+  } catch (_error) {
+    // Content script is not present yet.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: [SIDEBAR_SCRIPT_FILE]
+  });
+}
+
+async function handleRuntimeMessage(message, sender) {
+  const invalidMessage =
+    message === null ||
+    message === undefined ||
+    typeof message !== 'object';
+  if (invalidMessage) {
+    throw new Error('Invalid extension message');
+  }
+
+  if (message.type === 'bridge_chat_send') {
+    const tabId = sender?.tab?.id;
+    if (tabId == null) throw new Error('Unable to resolve sender tab');
+
+    const text = String(message.text || '').trim();
+    if (text === '') throw new Error('Message text is empty');
+
+    const parsedCommand = globalThis.ChromeBridgeCommands.parse(text);
+    if (parsedCommand !== null) {
+      const agentId = resolveAgentId(message.agentId);
+      const commandResult = await globalThis.ChromeBridgeCommands.handle(parsedCommand, {
+        tab: {
+          id: tabId,
+          url: String(sender?.tab?.url || ''),
+          title: String(sender?.tab?.title || '')
+        },
+        agentId,
+        sendToNative: sendNative,
+        forwardEvent: (event) => forwardChatEventToTab(tabId, event)
+      });
+      if (hasPersistPrefix(commandResult?.persistContext)) {
+        persistentChatContextByTabId.set(tabId, {
+          ...commandResult.persistContext,
+          prefix: String(commandResult.persistContext.prefix || '').trim()
+        });
+      }
+      return { accepted: commandResult.accepted, command: parsedCommand.name };
+    }
+
+    const agentId = resolveAgentId(message.agentId);
+    let persistentCtx = persistentChatContextByTabId.get(tabId);
+    if (!persistentCtx && AUTO_CONTEXT_ENABLED) {
+      const autoCtx = globalThis.ChromeBridgeCommands.getAutoPersistContext({
+        tab: {
+          id: tabId,
+          url: String(sender?.tab?.url || ''),
+          title: String(sender?.tab?.title || '')
+        },
+        agentId,
+        sendToNative: sendNative,
+        forwardEvent: (event) => forwardChatEventToTab(tabId, event)
+      });
+      if (hasPersistPrefix(autoCtx)) {
+        persistentCtx = {
+          ...autoCtx,
+          prefix: String(autoCtx.prefix || '').trim()
+        };
+        persistentChatContextByTabId.set(tabId, persistentCtx);
+      }
+    }
+    const textWithContext =
+      hasPersistPrefix(persistentCtx)
+        ? [persistentCtx.prefix, `User request: ${text}`].join('\n')
+        : text;
+    sendNative({
+      type: 'chat_user_message',
+      tabId,
+      agentId,
+      text: textWithContext
+    });
+    return { accepted: true };
+  }
+
+  if (message.type === 'bridge_chat_close') {
+    const tabId = sender?.tab?.id;
+    if (tabId == null) return { closed: false };
+    persistentChatContextByTabId.delete(tabId);
+
+    sendNative({
+      type: 'chat_close',
+      tabId
+    });
+    return { closed: true };
+  }
+
+  throw new Error(`Unsupported message type: ${String(message.type || '')}`);
+}
 
 function connectNativeHost() {
   if (nativePort !== null) return;
@@ -33,6 +165,11 @@ function connectNativeHost() {
 
     if (message.type === 'list_tabs') {
       await handleListTabs(message);
+      return;
+    }
+
+    if (message.type === 'chat_event') {
+      await handleChatEvent(message);
       return;
     }
   });
@@ -180,6 +317,33 @@ async function handleListTabs(payload) {
   }
 }
 
+async function handleChatEvent(message) {
+  const tabId = Number(message?.tabId);
+  if (!Number.isFinite(tabId)) return;
+
+  try {
+    await ensureSidebarScriptInjected(tabId);
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'bridge_chat_event',
+      event: message
+    });
+  } catch (error) {
+    console.warn('[chrome-bridge] unable to forward chat event', error);
+  }
+}
+
+async function forwardChatEventToTab(tabId, event) {
+  try {
+    await ensureSidebarScriptInjected(tabId);
+    await chrome.tabs.sendMessage(tabId, {
+      type: 'bridge_chat_event',
+      event
+    });
+  } catch (error) {
+    console.warn('[chrome-bridge] unable to deliver local chat command event', error);
+  }
+}
+
 async function evaluateInTabWithDebugger(tabId, expression) {
   const target = { tabId };
   await debuggerAttach(target);
@@ -277,4 +441,15 @@ function sendNative(message) {
   } catch (error) {
     console.error('[chrome-bridge] postMessage failed', error);
   }
+}
+
+function resolveAgentId(rawAgentId) {
+  const cleaned = String(rawAgentId || '').trim();
+  if (cleaned !== '') return cleaned;
+  if (DEFAULT_AGENT_ID !== '') return DEFAULT_AGENT_ID;
+  throw new Error('No agentId provided and no runtime defaultAgentId configured');
+}
+
+function hasPersistPrefix(persistContext) {
+  return String(persistContext?.prefix || '').trim() !== '';
 }
