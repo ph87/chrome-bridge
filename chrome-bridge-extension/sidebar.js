@@ -105,7 +105,7 @@
     applyPanelSize(panelSize);
     applyPanelPosition(panelPosition);
     setMinimized(false);
-    if (textareaEl && !isMinimized) textareaEl.focus();
+    focusTextareaWithoutScroll();
   }
 
   function closeSidebar() {
@@ -500,6 +500,15 @@
     } catch (error) {
       appendMessage('system', `Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
+      focusTextareaWithoutScroll();
+    }
+  }
+
+  function focusTextareaWithoutScroll() {
+    if (!textareaEl || isMinimized) return;
+    try {
+      textareaEl.focus({ preventScroll: true });
+    } catch (_error) {
       textareaEl.focus();
     }
   }
