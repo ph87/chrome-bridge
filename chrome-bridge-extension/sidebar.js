@@ -28,6 +28,10 @@
   let textareaEl = null;
   let contentEl = null;
   let settingsEl = null;
+  let resizeHandleEl = null;
+  let gearBtnEl = null;
+  let minimizeBtnEl = null;
+  let maximizeBtnEl = null;
   let agentListEl = null;
   let editorWrapEl = null;
   let agentNameInputEl = null;
@@ -37,6 +41,7 @@
   let settingsStatusEl = null;
   let statusEl = null;
   let isOpen = false;
+  let isMinimized = false;
   let ignoreIncomingEventsWhileClosed = false;
   let activeAgentId = DEFAULT_AGENT_ID;
   let editingAgentId = null;
@@ -99,7 +104,8 @@
     ignoreIncomingEventsWhileClosed = false;
     applyPanelSize(panelSize);
     applyPanelPosition(panelPosition);
-    if (textareaEl) textareaEl.focus();
+    setMinimized(false);
+    if (textareaEl && !isMinimized) textareaEl.focus();
   }
 
   function closeSidebar() {
@@ -107,6 +113,11 @@
     ignoreIncomingEventsWhileClosed = true;
     rootEl?.remove();
     rootEl = null;
+    resizeHandleEl = null;
+    gearBtnEl = null;
+    minimizeBtnEl = null;
+    maximizeBtnEl = null;
+    isMinimized = false;
     void safeSendRuntimeMessage({ type: 'bridge_chat_close' });
   }
 
@@ -126,12 +137,26 @@
     const actions = document.createElement('div');
     actions.className = 'cb-actions';
 
-    const gearBtn = document.createElement('button');
-    gearBtn.className = 'cb-icon-btn';
-    gearBtn.type = 'button';
-    gearBtn.textContent = '⚙️';
-    gearBtn.title = 'Settings';
-    gearBtn.addEventListener('click', showSettings);
+    gearBtnEl = document.createElement('button');
+    gearBtnEl.className = 'cb-icon-btn cb-btn-gear';
+    gearBtnEl.type = 'button';
+    gearBtnEl.textContent = '⚙️';
+    gearBtnEl.title = 'Settings';
+    gearBtnEl.addEventListener('click', showSettings);
+
+    minimizeBtnEl = document.createElement('button');
+    minimizeBtnEl.className = 'cb-icon-btn cb-btn-minimize';
+    minimizeBtnEl.type = 'button';
+    minimizeBtnEl.textContent = '➖';
+    minimizeBtnEl.title = 'Minimize';
+    minimizeBtnEl.addEventListener('click', () => setMinimized(true));
+
+    maximizeBtnEl = document.createElement('button');
+    maximizeBtnEl.className = 'cb-icon-btn cb-btn-maximize';
+    maximizeBtnEl.type = 'button';
+    maximizeBtnEl.textContent = '🔲';
+    maximizeBtnEl.title = 'Maximize';
+    maximizeBtnEl.addEventListener('click', () => setMinimized(false));
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'cb-icon-btn';
@@ -140,7 +165,9 @@
     closeBtn.title = 'Close';
     closeBtn.addEventListener('click', closeSidebar);
 
-    actions.appendChild(gearBtn);
+    actions.appendChild(gearBtnEl);
+    actions.appendChild(minimizeBtnEl);
+    actions.appendChild(maximizeBtnEl);
     actions.appendChild(closeBtn);
     header.appendChild(title);
     header.appendChild(actions);
@@ -180,13 +207,20 @@
     rootEl.appendChild(header);
     rootEl.appendChild(contentEl);
     rootEl.appendChild(settingsEl);
-    const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'cb-resize-handle';
-    resizeHandle.title = 'Resize';
-    rootEl.appendChild(resizeHandle);
-    setupResize(resizeHandle);
+    resizeHandleEl = document.createElement('div');
+    resizeHandleEl.className = 'cb-resize-handle';
+    resizeHandleEl.title = 'Resize';
+    rootEl.appendChild(resizeHandleEl);
+    setupResize(resizeHandleEl);
+    setMinimized(false);
 
     document.documentElement.appendChild(rootEl);
+  }
+
+  function setMinimized(next) {
+    isMinimized = Boolean(next);
+    if (!rootEl) return;
+    rootEl.classList.toggle('cb-minimized', isMinimized);
   }
 
   function setupDrag(handleEl) {
@@ -592,9 +626,10 @@
       activateBtn.className = 'cb-btn';
       activateBtn.type = 'button';
       const isActive = config.id === activeAgentId;
-      activateBtn.textContent = isActive ? 'Activated' : 'Activate';
-      activateBtn.disabled = isActive;
+      activateBtn.textContent = isActive ? '🔴' : '⚫️';
+      if (isActive) activateBtn.classList.add('cb-btn-active');
       activateBtn.addEventListener('click', () => {
+        if (isActive) return;
         activeAgentId = config.id;
         if (statusEl) statusEl.textContent = buildActiveAgentStatusText();
         setSettingsStatus(`Activated: ${config.name || config.id}`);
@@ -605,7 +640,7 @@
       const editBtn = document.createElement('button');
       editBtn.className = 'cb-btn';
       editBtn.type = 'button';
-      editBtn.textContent = 'Edit';
+      editBtn.textContent = '⚙';
       editBtn.addEventListener('click', () => {
         editingAgentId = config.id;
         populateAgentEditor(config.id);
@@ -614,7 +649,7 @@
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'cb-btn cb-btn-danger';
       deleteBtn.type = 'button';
-      deleteBtn.textContent = 'Delete';
+      deleteBtn.textContent = '𐄂';
       deleteBtn.addEventListener('click', () => {
         void handleDeleteAgentConfig(config.id);
       });

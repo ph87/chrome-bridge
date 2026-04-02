@@ -32,6 +32,18 @@
   box-sizing: border-box;
 }
 
+#chrome-bridge-chat-root.cb-minimized {
+  height: 48px !important;
+  min-height: 48px;
+  overflow: hidden;
+}
+
+#chrome-bridge-chat-root.cb-minimized .cb-body,
+#chrome-bridge-chat-root.cb-minimized .cb-settings,
+#chrome-bridge-chat-root.cb-minimized .cb-resize-handle {
+  display: none !important;
+}
+
 .cb-header {
   height: 48px;
   border-bottom: 1px solid #e5e7eb;
@@ -68,6 +80,19 @@
   justify-content: center;
   line-height: 1;
   padding: 0;
+}
+
+.cb-btn-maximize {
+  display: none;
+}
+
+#chrome-bridge-chat-root.cb-minimized .cb-btn-gear,
+#chrome-bridge-chat-root.cb-minimized .cb-btn-minimize {
+  display: none;
+}
+
+#chrome-bridge-chat-root.cb-minimized .cb-btn-maximize {
+  display: inline-flex;
 }
 
 .cb-body {
@@ -252,6 +277,17 @@
   justify-content: center;
   padding: 0 10px;
   font-size: 12px;
+}
+
+.cb-btn:disabled {
+  opacity: 1;
+  color: inherit;
+  cursor: default;
+}
+
+.cb-btn-active {
+  color: inherit;
+  font-weight: 600;
 }
 
 .cb-btn-danger {
