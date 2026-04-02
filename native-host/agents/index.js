@@ -1,56 +1,54 @@
 const crypto = require('node:crypto');
 
 const { createAcpRpcSession } = require('./adapters/acpRpcAdapter');
-const { createCodexAcpSession } = require('./adapters/codexAcpAdapter');
 const { createStdioSession } = require('./adapters/stdioAdapter');
-const { parseArgsJson, resolveExecutable, stripAnsi } = require('./utils');
+const { resolveExecutable, stripAnsi } = require('./utils');
 
-const DEFAULT_AGENT_ID = 'codex-acp';
+const ADAPTER_FACTORIES = {
+  'acp-rpc': createAcpRpcSession,
+  stdio: createStdioSession
+};
 
 function loadAgentRegistryFromEnv() {
-  const defaultCommand = process.env.CODEX_ACP_COMMAND || 'codex-acp';
-  const defaultArgs = parseArgsJson(process.env.CODEX_ACP_ARGS_JSON, []);
-
-  const fallback = {
-    [DEFAULT_AGENT_ID]: {
-      adapter: process.env.CODEX_ACP_ADAPTER || 'acp-rpc',
-      command: defaultCommand,
-      args: defaultArgs,
-      mode: process.env.CODEX_ACP_MODE || 'acp_rpc'
-    }
-  };
-
   const raw = process.env.AGENT_COMMANDS_JSON;
-  if (!raw) return fallback;
+  if (!raw) return {};
 
   try {
-    const parsed = JSON.parse(raw);
-    const output = {};
-
-    for (const [agentId, spec] of Object.entries(parsed || {})) {
-      if (!agentId || typeof spec !== 'object' || spec === null) continue;
-      const command = String(spec.command || '').trim();
-      if (command === '') continue;
-
-      const args = Array.isArray(spec.args) ? spec.args.map((item) => String(item)) : [];
-      const mode = String(spec.mode || spec.stdinMode || 'text').trim().toLowerCase() || 'text';
-      const adapter = String(spec.adapter || '').trim().toLowerCase() || inferAdapter(agentId, mode);
-
-      output[agentId] = { adapter, command, args, mode };
+    const parsed = JSON.parse(raw) || {};
+    const entries = Object.entries(parsed);
+    const registry = {};
+    for (const [agentId, spec] of entries) {
+      if (!agentId) continue;
+      try {
+        registry[agentId] = parseAgentSpec(spec);
+      } catch (_error) {
+        // Ignore invalid registry entries.
+      }
     }
-
-    if (Object.keys(output).length === 0) return fallback;
-    return output;
+    return registry;
   } catch (_error) {
-    return fallback;
+    return {};
   }
 }
 
-function inferAdapter(agentId, mode) {
-  if (String(mode).toLowerCase() === 'acp_rpc') return 'acp-rpc';
-  if (String(mode).toLowerCase() === 'codex_exec_json') return 'codex-acp';
-  if (String(agentId).toLowerCase() === DEFAULT_AGENT_ID) return 'acp-rpc';
-  return 'stdio';
+function parseAgentSpec(rawSpec) {
+  const command = String(rawSpec?.command || '').trim();
+  if (command === '') throw new Error('Missing command');
+  const adapter = String(rawSpec?.adapter || '').trim();
+  if (!ADAPTER_FACTORIES[adapter]) throw new Error(`Unsupported adapter: ${adapter}`);
+  const args = Array.isArray(rawSpec?.args) ? rawSpec.args.map((item) => String(item)) : [];
+  const mode = String(rawSpec?.mode || rawSpec?.stdinMode || 'text').trim().toLowerCase() || 'text';
+  return { command, adapter, args, mode };
+}
+
+function buildSpecKey(agentId, spec) {
+  return JSON.stringify({
+    agentId: String(agentId),
+    adapter: String(spec.adapter),
+    command: String(spec.command),
+    args: Array.isArray(spec?.args) ? spec.args.map((item) => String(item)) : [],
+    mode: String(spec.mode || '')
+  });
 }
 
 function createAgentBridge({ agentRegistry, onEvent }) {
@@ -67,30 +65,29 @@ function createAgentBridge({ agentRegistry, onEvent }) {
     });
   }
 
-  function resolveSpec(requestedAgentId) {
-    const agentId = String(requestedAgentId || DEFAULT_AGENT_ID).trim() || DEFAULT_AGENT_ID;
-    const spec = registry[agentId];
-    if (spec) return { agentId, spec };
-
-    const fallback = registry[DEFAULT_AGENT_ID];
-    if (!fallback) {
-      throw new Error(`Unsupported agent and no default available: ${agentId}`);
+  function resolveSpec(requestedAgentId, requestedAgentSpec) {
+    const providedId = String(requestedAgentId || '').trim();
+    if (requestedAgentSpec) {
+      const agentId = providedId || 'selected-agent';
+      return { agentId, spec: parseAgentSpec(requestedAgentSpec) };
     }
 
-    return { agentId: DEFAULT_AGENT_ID, spec: fallback };
+    if (providedId !== '') {
+      const spec = registry[providedId];
+      if (spec) return { agentId: providedId, spec };
+      throw new Error(`Unsupported agent: ${providedId}`);
+    }
+
+    throw new Error('No selected agent. Please choose an agent in sidebar settings.');
   }
 
-  function createSession(tabId, requestedAgentId) {
-    const { agentId, spec } = resolveSpec(requestedAgentId);
-    if (!spec || !spec.command) {
-      throw new Error(`Unsupported agent: ${String(requestedAgentId || '')}`);
-    }
-
+  function createSession(tabId, resolved) {
+    const { agentId, spec } = resolved;
     const sessionId = crypto.randomUUID();
     const command = resolveExecutable(spec.command);
+    const adapter = spec.adapter;
     const args = spec.args || [];
-    const mode = String(spec.mode || 'text').trim().toLowerCase() || 'text';
-    const adapter = String(spec.adapter || inferAdapter(agentId, mode)).trim().toLowerCase();
+    const mode = spec.mode || 'text';
 
     const baseContext = {
       tabId,
@@ -103,22 +100,16 @@ function createAgentBridge({ agentRegistry, onEvent }) {
       emit: (kind, text, extra) => emit(tabId, sessionId, kind, text, extra)
     };
 
-    let driver;
-    if (adapter === 'acp-rpc') {
-      driver = createAcpRpcSession(baseContext);
-    } else if (adapter === 'codex-acp') {
-      driver = createCodexAcpSession(baseContext);
-    } else if (adapter === 'stdio') {
-      driver = createStdioSession(baseContext);
-    } else {
-      throw new Error(`Unsupported adapter: ${adapter}`);
-    }
+    const factory = ADAPTER_FACTORIES[adapter];
+    if (!factory) throw new Error(`Unsupported adapter: ${adapter}`);
+    const driver = factory(baseContext);
 
     const record = {
       tabId,
       sessionId,
       agentId,
       adapter,
+      specKey: buildSpecKey(agentId, spec),
       driver,
       closed: false
     };
@@ -126,33 +117,32 @@ function createAgentBridge({ agentRegistry, onEvent }) {
     return record;
   }
 
-  function ensureSession(tabId, requestedAgentId) {
-    const desiredAgent = String(requestedAgentId || DEFAULT_AGENT_ID).trim() || DEFAULT_AGENT_ID;
+  function ensureSession(tabId, requestedAgentId, requestedAgentSpec) {
+    const resolved = resolveSpec(requestedAgentId, requestedAgentSpec);
+    const desiredAgent = resolved.agentId;
+    const desiredSpecKey = buildSpecKey(resolved.agentId, resolved.spec);
     const existing = sessionsByTabId.get(tabId);
 
-    if (existing && !existing.closed && existing.agentId === desiredAgent) {
+    if (existing && !existing.closed && existing.agentId === desiredAgent && existing.specKey === desiredSpecKey) {
       return existing;
     }
 
-    if (existing && !existing.closed && existing.agentId !== desiredAgent) {
+    if (existing && !existing.closed) {
       closeSession(tabId, 'switch_agent');
     }
 
-    return createSession(tabId, desiredAgent);
+    return createSession(tabId, resolved);
   }
 
-  async function handleUserMessage({ tabId, agentId, text }) {
+  async function handleUserMessage({ tabId, agentId, agentSpec, text }) {
     const numericTabId = Number(tabId);
     if (!Number.isFinite(numericTabId)) return;
 
     const payload = String(text || '').trim();
-    if (payload === '') {
-      emit(numericTabId, null, 'error', 'Cannot send empty message');
-      return;
-    }
+    if (payload === '') return;
 
     try {
-      const session = ensureSession(numericTabId, agentId);
+      const session = ensureSession(numericTabId, agentId, agentSpec);
       await session.driver.sendUserMessage(payload);
     } catch (error) {
       emit(numericTabId, null, 'error', error instanceof Error ? error.message : String(error));
@@ -188,7 +178,6 @@ function createAgentBridge({ agentRegistry, onEvent }) {
 }
 
 module.exports = {
-  DEFAULT_AGENT_ID,
   loadAgentRegistryFromEnv,
   createAgentBridge
 };

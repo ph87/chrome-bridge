@@ -54,29 +54,29 @@ function rejectAllPending(reason) {
 }
 
 function handleNativeMessage(message) {
-  pushEvent('native_in', { type: message?.type || null, taskId: message?.taskId || null });
+  const type = message?.type || null;
+  pushEvent('native_in', { type, taskId: message?.taskId || null });
 
-  if (message?.type === 'host_status') {
-    extensionConnected = true;
-    return;
-  }
-
-  if (message?.type === 'execution_result' && message?.taskId) {
-    resolvePending(message.taskId, message);
-    return;
-  }
-
-  if (message?.type === 'chat_user_message') {
-    void agentBridge.handleUserMessage({
-      tabId: message?.tabId,
-      agentId: message?.agentId,
-      text: message?.text
-    });
-    return;
-  }
-
-  if (message?.type === 'chat_close') {
-    agentBridge.closeSession(message?.tabId, 'closed_by_extension');
+  switch (type) {
+    case 'host_status':
+      extensionConnected = true;
+      return;
+    case 'execution_result':
+      if (message?.taskId) resolvePending(message.taskId, message);
+      return;
+    case 'chat_user_message':
+      void agentBridge.handleUserMessage({
+        tabId: message?.tabId,
+        agentId: message?.agentId,
+        agentSpec: message?.agentSpec,
+        text: message?.text
+      });
+      return;
+    case 'chat_close':
+      agentBridge.closeSession(message?.tabId, 'closed_by_extension');
+      return;
+    default:
+      return;
   }
 }
 

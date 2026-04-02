@@ -1,6 +1,6 @@
 (function initChromeBridgeRuntimeConfig() {
   const DEFAULTS = {
-    defaultAgentId: 'codex-acp',
+    defaultAgentId: '',
     autoContextEnabled: true,
     autoContextCommand: 'page'
   };

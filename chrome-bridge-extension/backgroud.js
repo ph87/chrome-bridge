@@ -5,6 +5,12 @@ importScripts('runtime-config.js', 'commands/index.js');
 const runtimeConfig = globalThis.ChromeBridgeRuntimeConfig || {};
 const DEFAULT_AGENT_ID = String(runtimeConfig.defaultAgentId || '').trim();
 const AUTO_CONTEXT_ENABLED = runtimeConfig.autoContextEnabled !== false;
+const ADAPTER_MAP = Object.freeze({
+  'acp-rpc': 'acp-rpc',
+  acpRpcAdapter: 'acp-rpc',
+  stdio: 'stdio',
+  stdioAdapter: 'stdio'
+});
 
 let nativePort = null;
 let reconnectTimer = null;
@@ -54,13 +60,7 @@ async function ensureSidebarScriptInjected(tabId) {
 }
 
 async function handleRuntimeMessage(message, sender) {
-  const invalidMessage =
-    message === null ||
-    message === undefined ||
-    typeof message !== 'object';
-  if (invalidMessage) {
-    throw new Error('Invalid extension message');
-  }
+  if (!message || typeof message !== 'object') throw new Error('Invalid extension message');
 
   if (message.type === 'bridge_chat_send') {
     const tabId = sender?.tab?.id;
@@ -68,17 +68,18 @@ async function handleRuntimeMessage(message, sender) {
 
     const text = String(message.text || '').trim();
     if (text === '') throw new Error('Message text is empty');
+    const agentSelection = resolveAgentSelection(message);
 
     const parsedCommand = globalThis.ChromeBridgeCommands.parse(text);
     if (parsedCommand !== null) {
-      const agentId = resolveAgentId(message.agentId);
       const commandResult = await globalThis.ChromeBridgeCommands.handle(parsedCommand, {
         tab: {
           id: tabId,
           url: String(sender?.tab?.url || ''),
           title: String(sender?.tab?.title || '')
         },
-        agentId,
+        agentId: agentSelection.agentId,
+        agentSpec: agentSelection.agentSpec,
         sendToNative: sendNative,
         forwardEvent: (event) => forwardChatEventToTab(tabId, event)
       });
@@ -91,7 +92,7 @@ async function handleRuntimeMessage(message, sender) {
       return { accepted: commandResult.accepted, command: parsedCommand.name };
     }
 
-    const agentId = resolveAgentId(message.agentId);
+    const agentId = agentSelection.agentId;
     let persistentCtx = persistentChatContextByTabId.get(tabId);
     if (!persistentCtx && AUTO_CONTEXT_ENABLED) {
       const autoCtx = globalThis.ChromeBridgeCommands.getAutoPersistContext({
@@ -120,6 +121,7 @@ async function handleRuntimeMessage(message, sender) {
       type: 'chat_user_message',
       tabId,
       agentId,
+      agentSpec: agentSelection.agentSpec,
       text: textWithContext
     });
     return { accepted: true };
@@ -152,11 +154,7 @@ function connectNativeHost() {
   }
 
   nativePort.onMessage.addListener(async (message) => {
-    const invalidMessage =
-      message === null ||
-      message === undefined ||
-      typeof message !== 'object';
-    if (invalidMessage) return;
+    if (!message || typeof message !== 'object') return;
 
     if (message.type === 'execute_js') {
       await handleExecute(message);
@@ -400,17 +398,11 @@ function debuggerDetach(target) {
 }
 
 async function resolveTargetTab(payload) {
-  const targetTabId =
-    payload?.targetTabId == null || payload?.targetTabId === ''
-      ? null
-      : Number(payload.targetTabId);
+  const targetTabId = payload?.targetTabId == null || payload?.targetTabId === '' ? null : Number(payload.targetTabId);
 
   if (Number.isFinite(targetTabId)) {
     const tab = await chrome.tabs.get(targetTabId);
-    const invalidTab = tab === null || tab === undefined || tab.id === undefined;
-    if (invalidTab) {
-      throw new Error(`targetTabId not found: ${targetTabId}`);
-    }
+    if (!tab || tab.id === undefined) throw new Error(`targetTabId not found: ${targetTabId}`);
     return tab;
   }
 
@@ -418,19 +410,13 @@ async function resolveTargetTab(payload) {
   if (targetUrlPattern !== '') {
     const tabs = await chrome.tabs.query({});
     const matched = tabs.find((tab) => String(tab.url || '').toLowerCase().includes(targetUrlPattern));
-    const noMatch = matched === null || matched === undefined || matched.id === undefined;
-    if (noMatch) {
-      throw new Error(`No tab matches targetUrlPattern: ${targetUrlPattern}`);
-    }
+    if (!matched || matched.id === undefined) throw new Error(`No tab matches targetUrlPattern: ${targetUrlPattern}`);
     return matched;
   }
 
   const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const activeTab = activeTabs[0];
-  const noActive = activeTab === null || activeTab === undefined || activeTab.id === undefined;
-  if (noActive) {
-    throw new Error('No active tab found');
-  }
+  if (!activeTab || activeTab.id === undefined) throw new Error('No active tab found');
   return activeTab;
 }
 
@@ -447,7 +433,28 @@ function resolveAgentId(rawAgentId) {
   const cleaned = String(rawAgentId || '').trim();
   if (cleaned !== '') return cleaned;
   if (DEFAULT_AGENT_ID !== '') return DEFAULT_AGENT_ID;
-  throw new Error('No agentId provided and no runtime defaultAgentId configured');
+  throw new Error('No selected agent id');
+}
+
+function resolveAgentSelection(message) {
+  const agentId = resolveAgentId(message?.agentId);
+  const agentSpec = parseAgentSpec(message?.agentSpec);
+  return { agentId, agentSpec };
+}
+
+function parseAgentSpec(rawSpec) {
+  if (!rawSpec || typeof rawSpec !== 'object') {
+    throw new Error('Missing agent spec');
+  }
+  const command = String(rawSpec.command || '').trim();
+  if (command === '') throw new Error('Agent command is empty');
+  const args = Array.isArray(rawSpec.args) ? rawSpec.args.map((item) => String(item)) : [];
+  const adapterRaw = String(rawSpec.adapter || '').trim();
+  const adapter = ADAPTER_MAP[adapterRaw] || null;
+  if (!adapter) {
+    throw new Error(`Unsupported adapter: ${adapterRaw}`);
+  }
+  return { command, args, adapter };
 }
 
 function hasPersistPrefix(persistContext) {

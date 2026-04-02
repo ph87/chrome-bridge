@@ -45,6 +45,7 @@
       type: 'chat_user_message',
       tabId: ctx.tab.id,
       agentId: ctx.agentId,
+      agentSpec: ctx.agentSpec,
       text: bridgedPrompt
     });
 

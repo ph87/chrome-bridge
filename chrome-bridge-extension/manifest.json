@@ -8,6 +8,12 @@
   "background": {
     "service_worker": "backgroud.js"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["sidebar.css"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_title": "Chrome Bridge"
   }

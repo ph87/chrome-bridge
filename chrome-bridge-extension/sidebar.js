@@ -5,8 +5,20 @@
   const ROOT_ID = 'chrome-bridge-chat-root';
   const STYLE_ID = 'chrome-bridge-chat-style';
   const SETTINGS_KEY = 'chromeBridgeChatSettings';
-  const DEFAULT_AGENT_ID = 'codex-acp';
-  const AGENT_OPTIONS = [{ id: 'codex-acp', label: 'codex-acp' }];
+  const DEFAULT_AGENT_ID = 'echo';
+  const BUILTIN_AGENT_CONFIGS = Object.freeze([
+    Object.freeze({
+      id: DEFAULT_AGENT_ID,
+      name: 'Echo',
+      command: '/bin/sh',
+      args: ['-lc', '/bin/bash "$CHROME_BRIDGE_PROJECT_ROOT/native-host/echo-agent.sh"'],
+      adapter: 'stdioAdapter'
+    })
+  ]);
+  const ADAPTER_OPTIONS = Object.freeze([
+    { value: 'acpRpcAdapter', label: 'acpRpcAdapter' },
+    { value: 'stdioAdapter', label: 'stdioAdapter' }
+  ]);
   const DRAG_MARGIN = 8;
   const MIN_PANEL_WIDTH = 320;
   const MIN_PANEL_HEIGHT = 360;
@@ -16,11 +28,19 @@
   let textareaEl = null;
   let contentEl = null;
   let settingsEl = null;
-  let agentSelectEl = null;
+  let agentListEl = null;
+  let editorWrapEl = null;
+  let agentNameInputEl = null;
+  let agentCommandInputEl = null;
+  let agentArgsInputEl = null;
+  let agentAdapterSelectEl = null;
+  let settingsStatusEl = null;
   let statusEl = null;
   let isOpen = false;
   let ignoreIncomingEventsWhileClosed = false;
   let activeAgentId = DEFAULT_AGENT_ID;
+  let editingAgentId = null;
+  let agentConfigs = BUILTIN_AGENT_CONFIGS.map((config) => cloneAgentConfig(config));
   let panelPosition = null;
   let panelSize = null;
   const assistantStreamsBySessionId = new Map();
@@ -58,174 +78,11 @@
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
 
-    const style = document.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = `
-      #${ROOT_ID} {
-        all: initial;
-        position: fixed;
-        top: 12px;
-        right: 12px;
-        width: clamp(320px, 25vw, 460px);
-        height: min(86vh, 900px);
-        background: #f9fafb;
-        border: 1px solid #d1d5db;
-        border-radius: 12px;
-        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.14);
-        z-index: 2147483647;
-        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: #111827;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      .cb-resize-handle {
-        position: absolute;
-        width: 14px;
-        height: 14px;
-        right: 2px;
-        bottom: 2px;
-        cursor: nwse-resize;
-        background:
-          linear-gradient(135deg, transparent 50%, #9ca3af 50%) bottom right / 100% 100% no-repeat;
-        z-index: 2;
-      }
-      #${ROOT_ID} * { box-sizing: border-box; }
-      .cb-header {
-        height: 48px;
-        border-bottom: 1px solid #e5e7eb;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 10px;
-        background: #ffffff;
-        cursor: move;
-        user-select: none;
-      }
-      .cb-title {
-        font-size: 13px;
-        font-weight: 700;
-        letter-spacing: 0.02em;
-      }
-      .cb-actions {
-        display: flex;
-        gap: 6px;
-      }
-      .cb-icon-btn {
-        border: 1px solid #d1d5db;
-        background: #fff;
-        border-radius: 6px;
-        width: 30px;
-        height: 30px;
-        cursor: pointer;
-        font-size: 15px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
-        padding: 0;
-      }
-      .cb-body {
-        flex: 1;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-      }
-      .cb-chat-list {
-        flex: 1;
-        overflow: auto;
-        padding: 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .cb-msg {
-        border-radius: 10px;
-        padding: 8px 10px;
-        font-size: 12px;
-        line-height: 1.45;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .cb-msg-user {
-        background: #2563eb;
-        color: #ffffff;
-        align-self: flex-end;
-        max-width: 92%;
-      }
-      .cb-msg-assistant {
-        background: #e5e7eb;
-        color: #111827;
-        align-self: flex-start;
-        max-width: 100%;
-      }
-      .cb-msg-system {
-        background: #f3f4f6;
-        color: #4b5563;
-        border: 1px dashed #d1d5db;
-      }
-      .cb-input-wrap {
-        border-top: 1px solid #e5e7eb;
-        padding: 10px;
-        background: #fff;
-      }
-      .cb-status {
-        font-size: 11px;
-        color: #6b7280;
-        margin-bottom: 8px;
-        min-height: 14px;
-      }
-      .cb-textarea {
-        width: 100%;
-        min-height: 74px;
-        max-height: 180px;
-        resize: vertical;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        padding: 8px;
-        font-size: 12px;
-        outline: none;
-      }
-      .cb-settings {
-        display: none;
-        flex: 1;
-        padding: 12px;
-        gap: 10px;
-        flex-direction: column;
-      }
-      .cb-settings-row {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .cb-label {
-        font-size: 12px;
-        font-weight: 600;
-      }
-      .cb-select {
-        height: 34px;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        padding: 0 8px;
-        font-size: 12px;
-      }
-      .cb-settings-note {
-        font-size: 11px;
-        color: #6b7280;
-      }
-      .cb-back {
-        height: 32px;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        background: #ffffff;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-      }
-    `;
-    document.documentElement.appendChild(style);
+    const link = document.createElement('link');
+    link.id = STYLE_ID;
+    link.rel = 'stylesheet';
+    link.href = chrome.runtime.getURL('sidebar.css');
+    document.documentElement.appendChild(link);
   }
 
   function toggleSidebar() {
@@ -300,7 +157,7 @@
 
     statusEl = document.createElement('div');
     statusEl.className = 'cb-status';
-    statusEl.textContent = `Agent: ${activeAgentId}`;
+    statusEl.textContent = buildActiveAgentStatusText();
 
     textareaEl = document.createElement('textarea');
     textareaEl.className = 'cb-textarea';
@@ -442,33 +299,109 @@
     const settings = document.createElement('div');
     settings.className = 'cb-settings';
 
-    const row = document.createElement('div');
-    row.className = 'cb-settings-row';
-
-    const label = document.createElement('label');
-    label.className = 'cb-label';
-    label.textContent = 'LLM Agent';
-
-    agentSelectEl = document.createElement('select');
-    agentSelectEl.className = 'cb-select';
-
-    for (const option of AGENT_OPTIONS) {
-      const opt = document.createElement('option');
-      opt.value = option.id;
-      opt.textContent = option.label;
-      agentSelectEl.appendChild(opt);
-    }
-
-    agentSelectEl.value = activeAgentId;
-    agentSelectEl.addEventListener('change', () => {
-      activeAgentId = agentSelectEl.value || DEFAULT_AGENT_ID;
-      if (statusEl) statusEl.textContent = `Agent: ${activeAgentId}`;
-      void saveSettings();
+    const headRow = document.createElement('div');
+    headRow.className = 'cb-settings-head';
+    const activeLabel = document.createElement('label');
+    activeLabel.className = 'cb-label';
+    activeLabel.textContent = 'Agent Configs (single active)';
+    const newBtn = document.createElement('button');
+    newBtn.className = 'cb-btn';
+    newBtn.type = 'button';
+    newBtn.textContent = 'New';
+    newBtn.addEventListener('click', () => {
+      beginCreateAgentConfig();
     });
+    headRow.appendChild(activeLabel);
+    headRow.appendChild(newBtn);
+
+    const activeRow = document.createElement('div');
+    activeRow.className = 'cb-settings-row';
+    agentListEl = document.createElement('div');
+    agentListEl.className = 'cb-agent-list';
+    activeRow.appendChild(agentListEl);
+
+    editorWrapEl = document.createElement('div');
+    editorWrapEl.className = 'cb-editor';
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'cb-settings-row';
+    const nameLabel = document.createElement('label');
+    nameLabel.className = 'cb-label';
+    nameLabel.textContent = 'Name';
+    agentNameInputEl = document.createElement('input');
+    agentNameInputEl.className = 'cb-input';
+    agentNameInputEl.type = 'text';
+    agentNameInputEl.placeholder = 'My Agent';
+    nameRow.appendChild(nameLabel);
+    nameRow.appendChild(agentNameInputEl);
+
+    const commandRow = document.createElement('div');
+    commandRow.className = 'cb-settings-row';
+    const commandLabel = document.createElement('label');
+    commandLabel.className = 'cb-label';
+    commandLabel.textContent = 'Command';
+    agentCommandInputEl = document.createElement('input');
+    agentCommandInputEl.className = 'cb-input';
+    agentCommandInputEl.type = 'text';
+    agentCommandInputEl.placeholder = '/path/to/bin or command';
+    commandRow.appendChild(commandLabel);
+    commandRow.appendChild(agentCommandInputEl);
+
+    const argsRow = document.createElement('div');
+    argsRow.className = 'cb-settings-row';
+    const argsLabel = document.createElement('label');
+    argsLabel.className = 'cb-label';
+    argsLabel.textContent = 'Arguments (one per line)';
+    agentArgsInputEl = document.createElement('textarea');
+    agentArgsInputEl.className = 'cb-args';
+    agentArgsInputEl.placeholder = '--flag\nvalue';
+    argsRow.appendChild(argsLabel);
+    argsRow.appendChild(agentArgsInputEl);
+
+    const adapterRow = document.createElement('div');
+    adapterRow.className = 'cb-settings-row';
+    const adapterLabel = document.createElement('label');
+    adapterLabel.className = 'cb-label';
+    adapterLabel.textContent = 'Adapter';
+    agentAdapterSelectEl = document.createElement('select');
+    agentAdapterSelectEl.className = 'cb-select';
+    for (const option of ADAPTER_OPTIONS) {
+      const opt = document.createElement('option');
+      opt.value = option.value;
+      opt.textContent = option.label;
+      agentAdapterSelectEl.appendChild(opt);
+    }
+    adapterRow.appendChild(adapterLabel);
+    adapterRow.appendChild(agentAdapterSelectEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'cb-settings-actions';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'cb-btn';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', () => {
+      void handleSaveAgentConfig();
+    });
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'cb-btn';
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      hideAgentEditor();
+    });
+
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+
+    settingsStatusEl = document.createElement('div');
+    settingsStatusEl.className = 'cb-settings-status';
 
     const note = document.createElement('div');
     note.className = 'cb-settings-note';
-    note.textContent = 'More agents can be added later. Current implementation supports codex-acp.';
+    note.textContent = 'Adapter maps: acpRpcAdapter -> acp-rpc, stdioAdapter -> stdio.';
 
     const backBtn = document.createElement('button');
     backBtn.className = 'cb-back';
@@ -476,12 +409,21 @@
     backBtn.textContent = 'Back to chat';
     backBtn.addEventListener('click', showChat);
 
-    row.appendChild(label);
-    row.appendChild(agentSelectEl);
-    settings.appendChild(row);
-    settings.appendChild(note);
+    editorWrapEl.appendChild(nameRow);
+    editorWrapEl.appendChild(commandRow);
+    editorWrapEl.appendChild(argsRow);
+    editorWrapEl.appendChild(adapterRow);
+    editorWrapEl.appendChild(actions);
+    editorWrapEl.appendChild(settingsStatusEl);
+    editorWrapEl.appendChild(note);
+
+    settings.appendChild(headRow);
+    settings.appendChild(activeRow);
+    settings.appendChild(editorWrapEl);
     settings.appendChild(backBtn);
 
+    renderAgentList();
+    hideAgentEditor();
     return settings;
   }
 
@@ -502,6 +444,12 @@
     const text = String(textareaEl.value || '').trim();
     if (text === '') return;
 
+    const activeAgent = getActiveAgentConfig();
+    if (!activeAgent) {
+      appendMessage('system', 'Error: No active agent config');
+      return;
+    }
+
     appendMessage('user', text);
     textareaEl.value = '';
 
@@ -509,7 +457,8 @@
       const response = await safeSendRuntimeMessage({
         type: 'bridge_chat_send',
         text,
-        agentId: activeAgentId
+        agentId: activeAgent.id,
+        agentSpec: toRuntimeAgentSpec(activeAgent)
       });
       if (!response?.ok) {
         throw new Error(response?.error || 'Failed to send message');
@@ -605,23 +554,326 @@
     return true;
   }
 
+  function getActiveAgentConfig() {
+    return agentConfigs.find((config) => config.id === activeAgentId) || agentConfigs[0] || null;
+  }
+
+  function buildActiveAgentStatusText() {
+    const active = getActiveAgentConfig();
+    if (!active) return 'Agent: -';
+    return `Agent: ${active.name || active.id}`;
+  }
+
+  function renderAgentList() {
+    if (!agentListEl) return;
+    agentListEl.innerHTML = '';
+    if (!agentConfigs.some((item) => item.id === activeAgentId)) {
+      activeAgentId = agentConfigs[0]?.id || DEFAULT_AGENT_ID;
+    }
+
+    for (const config of agentConfigs) {
+      const row = document.createElement('div');
+      row.className = 'cb-agent-item';
+
+      const left = document.createElement('div');
+      left.className = 'cb-agent-item-left';
+
+      const name = document.createElement('span');
+      name.className = 'cb-agent-name';
+      const marker = config.id === activeAgentId ? ' [active]' : '';
+      name.textContent = `${config.name || config.id}${marker}`;
+
+      left.appendChild(name);
+
+      const actionWrap = document.createElement('div');
+      actionWrap.className = 'cb-agent-actions';
+
+      const activateBtn = document.createElement('button');
+      activateBtn.className = 'cb-btn';
+      activateBtn.type = 'button';
+      const isActive = config.id === activeAgentId;
+      activateBtn.textContent = isActive ? 'Activated' : 'Activate';
+      activateBtn.disabled = isActive;
+      activateBtn.addEventListener('click', () => {
+        activeAgentId = config.id;
+        if (statusEl) statusEl.textContent = buildActiveAgentStatusText();
+        setSettingsStatus(`Activated: ${config.name || config.id}`);
+        void saveSettings();
+        renderAgentList();
+      });
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'cb-btn';
+      editBtn.type = 'button';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => {
+        editingAgentId = config.id;
+        populateAgentEditor(config.id);
+      });
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'cb-btn cb-btn-danger';
+      deleteBtn.type = 'button';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', () => {
+        void handleDeleteAgentConfig(config.id);
+      });
+
+      actionWrap.appendChild(activateBtn);
+      actionWrap.appendChild(editBtn);
+      actionWrap.appendChild(deleteBtn);
+
+      row.appendChild(left);
+      row.appendChild(actionWrap);
+      agentListEl.appendChild(row);
+    }
+  }
+
+  function populateAgentEditor(agentId) {
+    const config = agentConfigs.find((item) => item.id === agentId) || null;
+    if (!config) {
+      hideAgentEditor();
+      return;
+    }
+    setAgentEditorVisible(true);
+    editingAgentId = config.id;
+    if (agentNameInputEl) agentNameInputEl.value = config.name || config.id;
+    if (agentCommandInputEl) agentCommandInputEl.value = config.command || '';
+    if (agentArgsInputEl) agentArgsInputEl.value = (config.args || []).join('\n');
+    if (agentAdapterSelectEl) {
+      agentAdapterSelectEl.value = normalizeAdapterLabel(config.adapter);
+    }
+    setSettingsStatus(`Editing: ${config.name || config.id}`);
+  }
+
+  function beginCreateAgentConfig() {
+    setAgentEditorVisible(true);
+    editingAgentId = null;
+    if (agentNameInputEl) agentNameInputEl.value = '';
+    if (agentCommandInputEl) agentCommandInputEl.value = '';
+    if (agentArgsInputEl) agentArgsInputEl.value = '';
+    if (agentAdapterSelectEl) agentAdapterSelectEl.value = ADAPTER_OPTIONS[0].value;
+    setSettingsStatus('Creating new agent config');
+  }
+
+  function hideAgentEditor() {
+    editingAgentId = null;
+    if (agentNameInputEl) agentNameInputEl.value = '';
+    if (agentCommandInputEl) agentCommandInputEl.value = '';
+    if (agentArgsInputEl) agentArgsInputEl.value = '';
+    if (agentAdapterSelectEl) agentAdapterSelectEl.value = ADAPTER_OPTIONS[0].value;
+    setSettingsStatus('');
+    setAgentEditorVisible(false);
+  }
+
+  function setAgentEditorVisible(visible) {
+    if (!editorWrapEl) return;
+    editorWrapEl.style.display = visible ? 'flex' : 'none';
+  }
+
+  async function handleSaveAgentConfig() {
+    const draft = readAgentEditorDraft();
+    if (!draft.ok) {
+      setSettingsStatus(draft.error);
+      return;
+    }
+
+    const spec = draft.value;
+    if (editingAgentId) {
+      const idx = agentConfigs.findIndex((item) => item.id === editingAgentId);
+      if (idx !== -1) {
+        const id = editingAgentId;
+        agentConfigs[idx] = { ...spec, id };
+        editingAgentId = id;
+      } else {
+        const id = makeUniqueAgentId(spec.name);
+        agentConfigs.push({ ...spec, id });
+        editingAgentId = id;
+      }
+    } else {
+      const id = makeUniqueAgentId(spec.name);
+      agentConfigs.push({ ...spec, id });
+      editingAgentId = id;
+    }
+
+    if (!agentConfigs.some((item) => item.id === activeAgentId)) {
+      activeAgentId = agentConfigs[0]?.id || DEFAULT_AGENT_ID;
+    }
+    renderAgentList();
+    hideAgentEditor();
+    if (statusEl) statusEl.textContent = buildActiveAgentStatusText();
+    await saveSettings();
+  }
+
+  async function handleDeleteAgentConfig(targetId) {
+    const idToDelete = String(targetId || editingAgentId || '').trim();
+    if (idToDelete === '') {
+      setSettingsStatus('No selected config to delete');
+      return;
+    }
+    if (agentConfigs.length <= 1) {
+      setSettingsStatus('At least one agent config is required');
+      return;
+    }
+    const idx = agentConfigs.findIndex((item) => item.id === idToDelete);
+    if (idx === -1) {
+      setSettingsStatus('Selected config not found');
+      return;
+    }
+
+    const removed = agentConfigs[idx];
+    agentConfigs.splice(idx, 1);
+
+    if (activeAgentId === removed.id) {
+      activeAgentId = agentConfigs[0]?.id || DEFAULT_AGENT_ID;
+    }
+    renderAgentList();
+    hideAgentEditor();
+    if (statusEl) statusEl.textContent = buildActiveAgentStatusText();
+    await saveSettings();
+  }
+
+  function readAgentEditorDraft() {
+    const name = String(agentNameInputEl?.value || '').trim();
+    const command = String(agentCommandInputEl?.value || '').trim();
+    const args = String(agentArgsInputEl?.value || '')
+      .split('\n')
+      .map((item) => item.trim())
+      .filter((item) => item !== '');
+    const adapter = normalizeAdapterLabel(agentAdapterSelectEl?.value);
+
+    if (name === '') return { ok: false, error: 'Name is required' };
+    if (command === '') return { ok: false, error: 'Command is required' };
+    if (!isSupportedAdapterLabel(adapter)) return { ok: false, error: 'Unsupported adapter' };
+
+    return {
+      ok: true,
+      value: {
+        name,
+        command,
+        args,
+        adapter
+      }
+    };
+  }
+
+  function setSettingsStatus(text) {
+    if (!settingsStatusEl) return;
+    settingsStatusEl.textContent = String(text || '').trim();
+  }
+
+  function makeUniqueAgentId(name) {
+    const base = slugifyName(name) || 'agent';
+    let next = base;
+    let index = 2;
+    while (agentConfigs.some((item) => item.id === next)) {
+      next = `${base}-${index}`;
+      index += 1;
+    }
+    return next;
+  }
+
+  function slugifyName(name) {
+    return String(name || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function isSupportedAdapterLabel(value) {
+    return ADAPTER_OPTIONS.some((item) => item.value === value);
+  }
+
+  function normalizeAdapterLabel(value) {
+    const raw = String(value || '').trim();
+    if (raw === 'acp-rpc') return 'acpRpcAdapter';
+    if (raw === 'stdio') return 'stdioAdapter';
+    if (raw === 'acprpcadapter') return 'acpRpcAdapter';
+    if (raw === 'stdioadapter') return 'stdioAdapter';
+    if (isSupportedAdapterLabel(raw)) return raw;
+    return 'stdioAdapter';
+  }
+
+  function toRuntimeAgentSpec(config) {
+    return {
+      command: String(config?.command || '').trim(),
+      args: Array.isArray(config?.args) ? config.args.map((item) => String(item)) : [],
+      adapter: normalizeAdapterLabel(config?.adapter)
+    };
+  }
+
+  function normalizeAgentConfigs(value) {
+    const list = Array.isArray(value) ? value : [];
+    const output = [];
+    const seen = new Set();
+    for (const raw of list) {
+      const normalized = normalizeAgentConfig(raw);
+      if (!normalized) continue;
+      if (seen.has(normalized.id)) continue;
+      seen.add(normalized.id);
+      output.push(normalized);
+    }
+    const withBuiltins = ensureBuiltinAgentConfigs(output);
+    if (withBuiltins.length === 0) return BUILTIN_AGENT_CONFIGS.map((config) => cloneAgentConfig(config));
+    return withBuiltins;
+  }
+
+  function ensureBuiltinAgentConfigs(list) {
+    const output = Array.isArray(list) ? list.map((item) => cloneAgentConfig(item)) : [];
+    const existingIds = new Set(output.map((item) => item.id));
+    for (const builtin of BUILTIN_AGENT_CONFIGS) {
+      if (existingIds.has(builtin.id)) continue;
+      output.push(cloneAgentConfig(builtin));
+    }
+    return output;
+  }
+
+  function normalizeAgentConfig(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const name = String(raw.name || '').trim();
+    const command = String(raw.command || '').trim();
+    if (name === '' || command === '') return null;
+    const idRaw = String(raw.id || '').trim() || slugifyName(name);
+    const id = idRaw === '' ? null : idRaw;
+    if (!id) return null;
+    const args = Array.isArray(raw.args) ? raw.args.map((item) => String(item)) : [];
+    const adapter = normalizeAdapterLabel(raw.adapter);
+    return { id, name, command, args, adapter };
+  }
+
+  function cloneAgentConfig(config) {
+    return {
+      id: String(config.id),
+      name: String(config.name),
+      command: String(config.command),
+      args: Array.isArray(config.args) ? config.args.map((item) => String(item)) : [],
+      adapter: normalizeAdapterLabel(config.adapter)
+    };
+  }
+
   async function loadSettings() {
     try {
       const result = await safeStorageGet(SETTINGS_KEY);
       const settings = result?.[SETTINGS_KEY];
+      agentConfigs = normalizeAgentConfigs(settings?.agents);
       const storedAgentId = String(settings?.agentId || '').trim();
-      const valid = AGENT_OPTIONS.some((opt) => opt.id === storedAgentId);
-      activeAgentId = valid ? storedAgentId : DEFAULT_AGENT_ID;
+      const valid = agentConfigs.some((config) => config.id === storedAgentId);
+      activeAgentId = valid ? storedAgentId : (agentConfigs[0]?.id || DEFAULT_AGENT_ID);
+      editingAgentId = null;
       panelPosition = normalizePanelPosition(settings?.panelPosition);
       panelSize = normalizePanelSize(settings?.panelSize);
     } catch (_error) {
       activeAgentId = DEFAULT_AGENT_ID;
+      editingAgentId = null;
+      agentConfigs = BUILTIN_AGENT_CONFIGS.map((config) => cloneAgentConfig(config));
       panelPosition = null;
       panelSize = null;
     }
 
-    if (agentSelectEl) agentSelectEl.value = activeAgentId;
-    if (statusEl) statusEl.textContent = `Agent: ${activeAgentId}`;
+    renderAgentList();
+    hideAgentEditor();
+    if (statusEl) statusEl.textContent = buildActiveAgentStatusText();
     if (rootEl) {
       applyPanelSize(panelSize);
       applyPanelPosition(panelPosition);
@@ -632,6 +884,7 @@
     await safeStorageSet({
       [SETTINGS_KEY]: {
         agentId: activeAgentId,
+        agents: agentConfigs.map((config) => cloneAgentConfig(config)),
         panelPosition: panelPosition,
         panelSize: panelSize
       }
