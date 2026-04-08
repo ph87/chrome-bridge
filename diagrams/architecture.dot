@@ -1,0 +1,66 @@
+digraph chrome_bridge_architecture {
+  graph [
+    label="Chrome Bridge Architecture",
+    labelloc=t,
+    fontsize=28,
+    fontname="Helvetica-Bold",
+    pad=0.35,
+    ranksep=1.0,
+    nodesep=1.1,
+    splines=true
+  ];
+
+  rankdir=TB;
+
+  node [
+    shape=box,
+    style="rounded,filled",
+    fontname="Helvetica",
+    fontsize=14,
+    penwidth=1.4,
+    margin="0.2,0.14"
+  ];
+
+  edge [
+    color="#475569",
+    arrowsize=0.9,
+    penwidth=1.4
+  ];
+
+  terminal [
+    label="Terminal\nchrome-bridge-cli.sh",
+    fillcolor="#dbeafe",
+    color="#60a5fa"
+  ];
+
+  agent [
+    label="Agent Process\n(Codex / Echo / custom)",
+    fillcolor="#fee2e2",
+    color="#f87171"
+  ];
+
+  host [
+    label="Native Host\nnative-host/app.js\n127.0.0.1:3456",
+    fillcolor="#fef3c7",
+    color="#fbbf24"
+  ];
+
+  extension [
+    label="Chrome Extension\n(backgroud.js + sidebar.js)",
+    fillcolor="#dcfce7",
+    color="#4ade80"
+  ];
+
+  tab [
+    label="Browser Tab",
+    fillcolor="#dcfce7",
+    color="#4ade80"
+  ];
+
+  { rank=same; terminal; agent; }
+
+  terminal -> host [dir=both, label="HTTP /command"];
+  agent -> host [dir=both, label="stdio / JSON-RPC"];
+  host -> extension [dir=both, label="Native Messaging"];
+  extension -> tab [dir=both, label="execute JS / chat events"];
+}
