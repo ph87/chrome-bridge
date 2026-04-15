@@ -194,6 +194,11 @@ function connectNativeHost() {
       return;
     }
 
+    if (message.type === 'capture_screenshot') {
+      await handleCaptureScreenshot(message);
+      return;
+    }
+
     if (message.type === 'chat_event') {
       await handleChatEvent(message);
       return;
@@ -394,6 +399,83 @@ async function handleCloseTab(payload) {
         value: {
           closed: true,
           tab: closedTabInfo
+        }
+      }
+    });
+  } catch (error) {
+    sendNative({
+      type: 'execution_result',
+      taskId,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleCaptureScreenshot(payload) {
+  const taskId = String(payload.taskId || '');
+  if (taskId === '') {
+    sendNative({
+      type: 'execution_result',
+      taskId: '',
+      ok: false,
+      error: 'Missing taskId'
+    });
+    return;
+  }
+
+  try {
+    const tab = await resolveTargetTab(payload);
+    if (tab.id === undefined) throw new Error('Unable to resolve target tab id');
+
+    const format = String(payload?.format || 'png').trim().toLowerCase();
+    if (!['png', 'jpeg', 'webp'].includes(format)) {
+      throw new Error('Invalid format, expected png|jpeg|webp');
+    }
+
+    const rawQuality = payload?.quality == null || payload?.quality === '' ? null : Number(payload.quality);
+    if (rawQuality != null && (!Number.isFinite(rawQuality) || rawQuality < 0 || rawQuality > 100)) {
+      throw new Error('Invalid quality, expected 0..100');
+    }
+
+    const quality = rawQuality == null ? null : Math.round(rawQuality);
+    const captureBeyondViewport = payload?.captureBeyondViewport === true;
+
+    const target = { tabId: tab.id };
+    await debuggerAttach(target);
+    let screenshot;
+    try {
+      await debuggerSendCommand(target, 'Page.enable', {});
+      const params = {
+        format,
+        fromSurface: true,
+        captureBeyondViewport
+      };
+      if (quality != null && format !== 'png') {
+        params.quality = quality;
+      }
+      screenshot = await debuggerSendCommand(target, 'Page.captureScreenshot', params);
+    } finally {
+      await debuggerDetach(target).catch(() => undefined);
+    }
+
+    if (!screenshot?.data) {
+      throw new Error('Page.captureScreenshot returned empty data');
+    }
+
+    const afterTab = await chrome.tabs.get(tab.id).catch(() => null);
+    sendNative({
+      type: 'execution_result',
+      taskId,
+      ok: true,
+      result: {
+        value: {
+          dataBase64: screenshot.data,
+          format,
+          mimeType: format === 'jpeg' ? 'image/jpeg' : `image/${format}`,
+          targetTabId: tab.id,
+          targetTabUrl: (afterTab && afterTab.url) || tab.url || null,
+          captureBeyondViewport
         }
       }
     });

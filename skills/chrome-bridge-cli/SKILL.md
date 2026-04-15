@@ -93,7 +93,15 @@ Helper scripts:
 node scripts/open_url.js --url "https://www.google.com"
 node scripts/list_tabs.js
 node scripts/close_tab.js --tab-id 123456
-node scripts/screenshot.js
+node scripts/screenshot.js --output /tmp/page.png
 node scripts/click.js --selector "button[type='submit']"
 node scripts/input.js --selector "input[name='q']" --text "hello world"
+```
+
+Screenshot options:
+
+```bash
+node scripts/screenshot.js --format jpeg --quality 85
+node scripts/screenshot.js --full-page
+node scripts/screenshot.js --target-url-pattern jianzirumian.xyz --output /tmp/blog.png
 ```

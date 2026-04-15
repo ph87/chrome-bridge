@@ -271,6 +271,33 @@ function normalizeCommandBody(body) {
     };
   }
 
+  if (command === 'capture_screenshot') {
+    const targetTabId =
+      body?.targetTabId == null || body?.targetTabId === '' ? null : Number(body.targetTabId);
+    const targetUrlPattern = String(body?.targetUrlPattern || '').trim() || null;
+    const format = String(body?.format || '').trim().toLowerCase() || 'png';
+    const quality = body?.quality == null || body?.quality === '' ? null : Number(body.quality);
+    const captureBeyondViewport =
+      body?.captureBeyondViewport == null ? false : Boolean(body.captureBeyondViewport);
+
+    if (!['png', 'jpeg', 'webp'].includes(format)) {
+      throw new Error('`format` must be one of: png, jpeg, webp');
+    }
+    if (quality != null && (!Number.isFinite(quality) || quality < 0 || quality > 100)) {
+      throw new Error('`quality` must be a number in range 0..100');
+    }
+
+    return {
+      type: 'capture_screenshot',
+      taskId,
+      targetTabId: Number.isFinite(targetTabId) ? targetTabId : null,
+      targetUrlPattern,
+      format,
+      quality: quality == null ? null : Math.round(quality),
+      captureBeyondViewport
+    };
+  }
+
   const code = String(body?.code || '').trim();
   if (code === '') throw new Error('`code` is required');
 

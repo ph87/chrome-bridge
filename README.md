@@ -238,7 +238,13 @@ node scripts/close_tab.js --tab-id 123456
 Take screenshot:
 
 ```bash
-node scripts/screenshot.js
+node scripts/screenshot.js --output /tmp/page.png
+# Optional:
+# --format png|jpeg|webp
+# --quality 0-100
+# --full-page
+# --target-tab <id>
+# --target-url-pattern <pattern>
 ```
 
 Click element:
