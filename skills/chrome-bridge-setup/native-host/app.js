@@ -257,6 +257,18 @@ function normalizeCommandBody(body) {
     };
   }
 
+  if (command === 'list_frames') {
+    const targetTabId =
+      body?.targetTabId == null || body?.targetTabId === '' ? null : Number(body.targetTabId);
+    const targetUrlPattern = String(body?.targetUrlPattern || '').trim() || null;
+    return {
+      type: 'list_frames',
+      taskId,
+      targetTabId: Number.isFinite(targetTabId) ? targetTabId : null,
+      targetUrlPattern
+    };
+  }
+
   if (command === 'close_tab') {
     const targetTabId =
       body?.targetTabId == null || body?.targetTabId === '' ? null : Number(body.targetTabId);
@@ -304,13 +316,20 @@ function normalizeCommandBody(body) {
   const targetTabId =
     body?.targetTabId == null || body?.targetTabId === '' ? null : Number(body.targetTabId);
   const targetUrlPattern = String(body?.targetUrlPattern || '').trim() || null;
+  const frameId = String(body?.frameId || '').trim() || null;
+  const frameUrlPattern = String(body?.frameUrlPattern || '').trim() || null;
+  if (frameId && frameUrlPattern) {
+    throw new Error('`frameId` and `frameUrlPattern` are mutually exclusive');
+  }
 
   return {
     type: 'execute_js',
     taskId,
     code,
     targetTabId: Number.isFinite(targetTabId) ? targetTabId : null,
-    targetUrlPattern
+    targetUrlPattern,
+    frameId,
+    frameUrlPattern
   };
 }
 

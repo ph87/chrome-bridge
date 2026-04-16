@@ -11,7 +11,7 @@ function usage() {
   process.stdout.write(`Usage:
   chrome-bridge-cli.js --health
   chrome-bridge-cli.js --events
-  chrome-bridge-cli.js --code "document.title='EXEC_OK'" [--target-tab 123] [--target-url-pattern google.com] [--timeout-ms 20000]
+  chrome-bridge-cli.js --code "document.title='EXEC_OK'" [--target-tab 123] [--target-url-pattern google.com] [--frame-id <id> | --frame-url-pattern <pattern>] [--timeout-ms 20000]
   chrome-bridge-cli.js --open-url "https://example.com" [--target-tab 123] [--target-url-pattern example.com]
   chrome-bridge-cli.js --close-tab 123 [--timeout-ms 20000]
 `);
@@ -92,6 +92,8 @@ async function main(argv) {
   let closeTab = '';
   let targetTab = '';
   let targetUrlPattern = '';
+  let frameId = '';
+  let frameUrlPattern = '';
   let timeoutMs = '';
   let mode = 'command';
 
@@ -119,6 +121,14 @@ async function main(argv) {
     }
     if (arg === '--timeout-ms') {
       timeoutMs = argv[++i] ?? '';
+      continue;
+    }
+    if (arg === '--frame-id') {
+      frameId = argv[++i] ?? '';
+      continue;
+    }
+    if (arg === '--frame-url-pattern') {
+      frameUrlPattern = argv[++i] ?? '';
       continue;
     }
     if (arg === '--health') {
@@ -172,8 +182,14 @@ async function main(argv) {
     code,
     targetTabId: targetTab === '' ? null : Number(targetTab),
     targetUrlPattern: targetUrlPattern === '' ? null : targetUrlPattern,
+    frameId: frameId === '' ? null : String(frameId),
+    frameUrlPattern: frameUrlPattern === '' ? null : String(frameUrlPattern),
     timeoutMs: timeoutMs === '' ? null : Number(timeoutMs)
   };
+
+  if (payload.frameId && payload.frameUrlPattern) {
+    fail('Error: --frame-id and --frame-url-pattern are mutually exclusive', true);
+  }
 
   await requestPost(runtimeConfig, payload);
 }

@@ -35,6 +35,7 @@ Bridge flow:
 - `scripts/_bridge_client.js`
 - `scripts/open_url.js`
 - `scripts/list_tabs.js`
+- `scripts/list_frames.js`
 - `scripts/close_tab.js`
 - `scripts/screenshot.js`
 - `scripts/click.js`
@@ -69,6 +70,12 @@ Execute JavaScript by URL pattern:
 ./scripts/chrome-bridge-cli.js --code "document.title='DONE'" --target-url-pattern google.com
 ```
 
+Execute JavaScript in an iframe by URL pattern:
+
+```bash
+./scripts/chrome-bridge-cli.js --code "document.body.style.outline='3px solid red'" --frame-url-pattern recaptcha
+```
+
 Open URL through JS:
 
 ```bash
@@ -92,6 +99,7 @@ Helper scripts:
 ```bash
 node scripts/open_url.js --url "https://www.google.com"
 node scripts/list_tabs.js
+node scripts/list_frames.js --target-url-pattern google.com
 node scripts/close_tab.js --tab-id 123456
 node scripts/screenshot.js --output /tmp/page.png
 node scripts/click.js --selector "button[type='submit']"

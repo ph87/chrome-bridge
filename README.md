@@ -197,6 +197,12 @@ Execute JavaScript by URL pattern:
 ./scripts/chrome-bridge-cli.js --code "document.title='DONE'" --target-url-pattern google.com
 ```
 
+Execute JavaScript in an iframe by URL pattern:
+
+```bash
+./scripts/chrome-bridge-cli.js --code "document.body.style.outline='3px solid red'" --frame-url-pattern recaptcha
+```
+
 Open a URL:
 
 ```bash
@@ -219,6 +225,12 @@ List all tabs across all windows:
 
 ```bash
 node scripts/list_tabs.js
+```
+
+List all frames in the target tab:
+
+```bash
+node scripts/list_frames.js --target-url-pattern example.com
 ```
 
 ## Helper Scripts

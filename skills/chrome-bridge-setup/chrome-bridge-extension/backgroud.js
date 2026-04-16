@@ -189,6 +189,11 @@ function connectNativeHost() {
       return;
     }
 
+    if (message.type === 'list_frames') {
+      await handleListFrames(message);
+      return;
+    }
+
     if (message.type === 'close_tab') {
       await handleCloseTab(message);
       return;
@@ -235,6 +240,8 @@ function scheduleReconnect() {
 async function handleExecute(payload) {
   const taskId = String(payload.taskId || '');
   const code = String(payload.code || '').trim();
+  const frameId = String(payload?.frameId || '').trim() || null;
+  const frameUrlPattern = String(payload?.frameUrlPattern || '').trim() || null;
 
   if (taskId === '') {
     sendNative({
@@ -256,10 +263,24 @@ async function handleExecute(payload) {
     return;
   }
 
+  if (frameId && frameUrlPattern) {
+    sendNative({
+      type: 'execution_result',
+      taskId,
+      ok: false,
+      error: 'frameId and frameUrlPattern are mutually exclusive'
+    });
+    return;
+  }
+
   try {
     const tab = await resolveTargetTab(payload);
     const before = { url: tab.url || null, title: tab.title || null };
-    const evalResult = await evaluateInTabWithDebugger(tab.id, code);
+    const evaluateOutcome = await evaluateInTabWithDebugger(tab.id, code, {
+      frameId,
+      frameUrlPattern
+    });
+    const evalResult = evaluateOutcome.evaluation;
     if (evalResult.exceptionDetails) {
       const errText =
         evalResult.exceptionDetails.text ||
@@ -278,6 +299,7 @@ async function handleExecute(payload) {
         value: evalResult.result?.value ?? null,
         targetTabId: tab.id,
         targetTabUrl: (afterTab && afterTab.url) || tab.url || null,
+        targetFrameId: evaluateOutcome.targetFrameId,
         probe: {
           before,
           after: {
@@ -343,6 +365,59 @@ async function handleListTabs(payload) {
         }
       }
     });
+  } catch (error) {
+    sendNative({
+      type: 'execution_result',
+      taskId,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+async function handleListFrames(payload) {
+  const taskId = String(payload.taskId || '');
+  if (taskId === '') {
+    sendNative({
+      type: 'execution_result',
+      taskId: '',
+      ok: false,
+      error: 'Missing taskId'
+    });
+    return;
+  }
+
+  try {
+    const tab = await resolveTargetTab(payload);
+    if (tab.id === undefined) throw new Error('Unable to resolve target tab id');
+
+    const target = { tabId: tab.id };
+    await debuggerAttach(target);
+    try {
+      await debuggerSendCommand(target, 'Page.enable', {});
+      const tree = await debuggerSendCommand(target, 'Page.getFrameTree', {});
+      const frames = flattenFrameTree(tree?.frameTree).map((frame) => ({
+        frameId: frame.id,
+        parentFrameId: frame.parentId,
+        url: frame.url
+      }));
+
+      sendNative({
+        type: 'execution_result',
+        taskId,
+        ok: true,
+        result: {
+          value: {
+            targetTabId: tab.id,
+            targetTabUrl: tab.url || null,
+            totalFrames: frames.length,
+            frames
+          }
+        }
+      });
+    } finally {
+      await debuggerDetach(target).catch(() => undefined);
+    }
   } catch (error) {
     sendNative({
       type: 'execution_result',
@@ -516,20 +591,82 @@ async function forwardChatEventToTab(tabId, event) {
   }
 }
 
-async function evaluateInTabWithDebugger(tabId, expression) {
+async function evaluateInTabWithDebugger(tabId, expression, options = {}) {
   const target = { tabId };
   await debuggerAttach(target);
   try {
-    return await debuggerSendCommand(target, 'Runtime.evaluate', {
+    const targetFrameId = await resolveEvaluationFrameId(target, options);
+    const evaluateParams = {
       expression,
       returnByValue: true,
       awaitPromise: true,
       userGesture: true,
       allowUnsafeEvalBlockedByCSP: true
-    });
+    };
+
+    if (targetFrameId) {
+      const worldName = `chrome_bridge_world_${Date.now()}`;
+      const isolatedWorld = await debuggerSendCommand(target, 'Page.createIsolatedWorld', {
+        frameId: targetFrameId,
+        worldName
+      });
+      const contextId = Number(isolatedWorld?.executionContextId);
+      if (!Number.isFinite(contextId)) {
+        throw new Error(`Unable to resolve execution context for frameId: ${targetFrameId}`);
+      }
+      evaluateParams.contextId = contextId;
+    }
+
+    const evaluation = await debuggerSendCommand(target, 'Runtime.evaluate', evaluateParams);
+    return {
+      evaluation,
+      targetFrameId
+    };
   } finally {
     await debuggerDetach(target).catch(() => undefined);
   }
+}
+
+async function resolveEvaluationFrameId(target, options) {
+  const requestedFrameId = String(options?.frameId || '').trim() || null;
+  const frameUrlPattern = String(options?.frameUrlPattern || '').trim().toLowerCase() || null;
+  if (!requestedFrameId && !frameUrlPattern) return null;
+
+  await debuggerSendCommand(target, 'Page.enable', {});
+  const tree = await debuggerSendCommand(target, 'Page.getFrameTree', {});
+  const frames = flattenFrameTree(tree?.frameTree);
+
+  if (requestedFrameId) {
+    const existing = frames.find((frame) => frame.id === requestedFrameId);
+    if (!existing) {
+      throw new Error(`No frame found for frameId: ${requestedFrameId}`);
+    }
+    return requestedFrameId;
+  }
+
+  const matched = frames.find((frame) => String(frame.url || '').toLowerCase().includes(frameUrlPattern));
+  if (matched) return matched.id;
+
+  const knownUrls = frames
+    .slice(0, 10)
+    .map((frame) => frame.url || '(empty url)')
+    .join(', ');
+  throw new Error(`No frame matches frameUrlPattern: ${frameUrlPattern}. Known frame URLs: ${knownUrls}`);
+}
+
+function flattenFrameTree(frameTree, out = []) {
+  if (!frameTree || typeof frameTree !== 'object') return out;
+  const frame = frameTree.frame;
+  if (frame && typeof frame === 'object') {
+    out.push({
+      id: String(frame.id || ''),
+      parentId: frame.parentId == null ? null : String(frame.parentId),
+      url: String(frame.url || '')
+    });
+  }
+  const children = Array.isArray(frameTree.childFrames) ? frameTree.childFrames : [];
+  for (const child of children) flattenFrameTree(child, out);
+  return out;
 }
 
 function debuggerAttach(target) {

@@ -49,6 +49,8 @@ function usageCommon() {
     'Common options:',
     '  --target-tab <id>',
     '  --target-url-pattern <pattern>',
+    '  --frame-id <cdp frame id>',
+    '  --frame-url-pattern <pattern>',
     '  --timeout-ms <ms>'
   ].join('\n');
 }
@@ -57,6 +59,8 @@ function parseArgs(argv, handlers = {}) {
   const common = {
     targetTabId: null,
     targetUrlPattern: null,
+    frameId: null,
+    frameUrlPattern: null,
     timeoutMs: null
   };
   const local = {};
@@ -88,6 +92,20 @@ function parseArgs(argv, handlers = {}) {
       continue;
     }
 
+    if (arg === '--frame-id') {
+      const val = String(argv[++i] || '').trim();
+      if (val === '') throw new Error('Missing value for --frame-id');
+      common.frameId = val;
+      continue;
+    }
+
+    if (arg === '--frame-url-pattern') {
+      const val = String(argv[++i] || '').trim();
+      if (val === '') throw new Error('Missing value for --frame-url-pattern');
+      common.frameUrlPattern = val;
+      continue;
+    }
+
     const handler = handlers[arg];
     if (handler) {
       i = handler(argv, i, local);
@@ -101,11 +119,13 @@ function parseArgs(argv, handlers = {}) {
   return { common, local, positionals };
 }
 
-async function sendCode({ code, targetTabId, targetUrlPattern, timeoutMs }) {
+async function sendCode({ code, targetTabId, targetUrlPattern, frameId, frameUrlPattern, timeoutMs }) {
   return sendCommand({
     code,
     targetTabId,
     targetUrlPattern,
+    frameId: frameId || null,
+    frameUrlPattern: frameUrlPattern || null,
     timeoutMs
   });
 }
