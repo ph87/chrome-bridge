@@ -12,6 +12,7 @@ function usage() {
   chrome-bridge-cli.js --code "document.title='EXEC_OK'" [--target-tab 123] [--target-url-pattern google.com] [--frame-id <id> | --frame-url-pattern <pattern>] [--timeout-ms 20000]
   chrome-bridge-cli.js --open-url "https://example.com" [--target-tab 123] [--target-url-pattern example.com]
   chrome-bridge-cli.js --close-tab 123 [--timeout-ms 20000]
+  chrome-bridge-cli.js --capture-network [--duration-ms 5000] [--max-entries 200] [--include-bodies] [--reload] [--target-tab 123 | --target-url-pattern example.com]
 `);
 }
 
@@ -30,7 +31,12 @@ async function main(argv) {
   let frameId = '';
   let frameUrlPattern = '';
   let timeoutMs = '';
+  let durationMs = '';
+  let maxEntries = '';
+  let includeBodies = false;
+  let reload = false;
   let mode = 'command';
+  let captureNetwork = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -58,6 +64,22 @@ async function main(argv) {
       timeoutMs = argv[++i] ?? '';
       continue;
     }
+    if (arg === '--duration-ms') {
+      durationMs = argv[++i] ?? '';
+      continue;
+    }
+    if (arg === '--max-entries') {
+      maxEntries = argv[++i] ?? '';
+      continue;
+    }
+    if (arg === '--include-bodies') {
+      includeBodies = true;
+      continue;
+    }
+    if (arg === '--reload') {
+      reload = true;
+      continue;
+    }
     if (arg === '--frame-id') {
       frameId = argv[++i] ?? '';
       continue;
@@ -72,6 +94,10 @@ async function main(argv) {
     }
     if (arg === '--events') {
       mode = 'events';
+      continue;
+    }
+    if (arg === '--capture-network') {
+      captureNetwork = true;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
@@ -94,7 +120,15 @@ async function main(argv) {
   }
 
   let command = null;
-  if (closeTab !== '') {
+  if (captureNetwork) {
+    if (code !== '' || openUrl !== '' || closeTab !== '') {
+      fail('Error: --capture-network cannot be combined with --code, --open-url, or --close-tab', true);
+    }
+    if (frameId !== '' || frameUrlPattern !== '') {
+      fail('Error: --capture-network does not support --frame-id or --frame-url-pattern', true);
+    }
+    command = 'capture_network';
+  } else if (closeTab !== '') {
     if (code !== '' || openUrl !== '') {
       fail('Error: --close-tab cannot be combined with --code or --open-url', true);
     }
@@ -119,7 +153,11 @@ async function main(argv) {
     targetUrlPattern: targetUrlPattern === '' ? null : targetUrlPattern,
     frameId: frameId === '' ? null : String(frameId),
     frameUrlPattern: frameUrlPattern === '' ? null : String(frameUrlPattern),
-    timeoutMs: timeoutMs === '' ? null : Number(timeoutMs)
+    timeoutMs: timeoutMs === '' ? null : Number(timeoutMs),
+    durationMs: durationMs === '' ? null : Number(durationMs),
+    maxEntries: maxEntries === '' ? null : Number(maxEntries),
+    includeBodies,
+    reload
   };
 
   if (payload.frameId && payload.frameUrlPattern) {

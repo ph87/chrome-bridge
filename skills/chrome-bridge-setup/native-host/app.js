@@ -404,6 +404,34 @@ function normalizeCommandBody(body) {
     };
   }
 
+  if (command === 'capture_network') {
+    const targetTabId =
+      body?.targetTabId == null || body?.targetTabId === '' ? null : Number(body.targetTabId);
+    const targetUrlPattern = String(body?.targetUrlPattern || '').trim() || null;
+    const durationMs = body?.durationMs == null || body?.durationMs === '' ? 5000 : Number(body.durationMs);
+    const maxEntries = body?.maxEntries == null || body?.maxEntries === '' ? 200 : Number(body.maxEntries);
+    const includeBodies = body?.includeBodies === true;
+    const reload = body?.reload === true;
+
+    if (!Number.isFinite(durationMs) || durationMs < 250 || durationMs > 60000) {
+      throw new Error('`durationMs` must be a number in range 250..60000');
+    }
+    if (!Number.isFinite(maxEntries) || maxEntries < 1 || maxEntries > 2000) {
+      throw new Error('`maxEntries` must be a number in range 1..2000');
+    }
+
+    return {
+      type: 'capture_network',
+      taskId,
+      targetTabId: Number.isFinite(targetTabId) ? targetTabId : null,
+      targetUrlPattern,
+      durationMs: Math.round(durationMs),
+      maxEntries: Math.round(maxEntries),
+      includeBodies,
+      reload
+    };
+  }
+
   const code = String(body?.code || '').trim();
   if (code === '') throw new Error('`code` is required');
 

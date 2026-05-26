@@ -225,6 +225,25 @@ Read host events:
 ./scripts/chrome-bridge-cli.js --events
 ```
 
+Capture network traffic for troubleshooting:
+
+```bash
+./scripts/chrome-bridge-cli.js --capture-network --duration-ms 5000 --reload --target-url-pattern example.com
+```
+
+Include response bodies when needed:
+
+```bash
+./scripts/chrome-bridge-cli.js --capture-network --duration-ms 5000 --reload --include-bodies --target-tab 123456
+```
+
+Network capture returns structured JSON with:
+
+- `targetTabId` / `targetTabUrl`
+- `durationMs`
+- `totalCaptured`
+- `entries[]` containing request method, URL, resource type, status, headers, timing, and optional response body
+
 List all tabs across all windows:
 
 ```bash
@@ -255,10 +274,12 @@ Take screenshot:
 
 ```bash
 node scripts/screenshot.js --output /tmp/page.png
+node scripts/network.js --duration-ms 5000 --reload --target-url-pattern example.com
 # Optional:
 # --format png|jpeg|webp
 # --quality 0-100
 # --full-page
+# network.js: --include-bodies --max-entries <n> --reload
 # --target-tab <id>
 # --target-url-pattern <pattern>
 ```
@@ -281,6 +302,8 @@ node scripts/input.js --selector "input[name='q']" --text "hello world"
   - Make sure Chrome is running.
   - Reload the extension in `chrome://extensions`.
   - Re-run `./scripts/setup.sh <EXTENSION_ID>` if needed.
+- After changing extension files such as `background.js`, `sidepanel.js`, or `manifest.json`:
+  - Reload the unpacked extension in `chrome://extensions` before testing new commands.
 - Command times out:
   - Check target tab or URL pattern.
   - Try a simpler command first.

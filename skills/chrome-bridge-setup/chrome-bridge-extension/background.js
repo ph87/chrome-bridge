@@ -220,6 +220,11 @@ function connectNativeHost() {
       return;
     }
 
+    if (message.type === 'capture_network') {
+      await handleCaptureNetwork(message);
+      return;
+    }
+
     if (message.type === 'chat_event') {
       await handleChatEvent(message);
       return;
@@ -580,6 +585,52 @@ async function handleCaptureScreenshot(payload) {
   }
 }
 
+async function handleCaptureNetwork(payload) {
+  const taskId = String(payload.taskId || '');
+  if (taskId === '') {
+    sendNative({
+      type: 'execution_result',
+      taskId: '',
+      ok: false,
+      error: 'Missing taskId'
+    });
+    return;
+  }
+
+  try {
+    const tab = await resolveTargetTab(payload);
+    if (tab.id === undefined) throw new Error('Unable to resolve target tab id');
+
+    const durationMs = clampNumber(payload?.durationMs, 250, 60000, 5000);
+    const maxEntries = clampNumber(payload?.maxEntries, 1, 2000, 200);
+    const includeBodies = payload?.includeBodies === true;
+    const reload = payload?.reload === true;
+
+    const result = await captureNetworkTraffic(tab, {
+      durationMs,
+      maxEntries,
+      includeBodies,
+      reload
+    });
+
+    sendNative({
+      type: 'execution_result',
+      taskId,
+      ok: true,
+      result: {
+        value: result
+      }
+    });
+  } catch (error) {
+    sendNative({
+      type: 'execution_result',
+      taskId,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 async function handleChatEvent(message) {
   forwardChatEventToSidePanels(Number(message?.tabId), message);
 }
@@ -608,6 +659,231 @@ function handleTabRemoved(tabId) {
     type: 'chat_close',
     tabId
   });
+}
+
+async function captureNetworkTraffic(tab, options = {}) {
+  const tabId = Number(tab?.id);
+  if (!Number.isFinite(tabId)) throw new Error('Invalid target tab id');
+
+  const durationMs = clampNumber(options?.durationMs, 250, 60000, 5000);
+  const maxEntries = clampNumber(options?.maxEntries, 1, 2000, 200);
+  const includeBodies = options?.includeBodies === true;
+  const reload = options?.reload === true;
+  const target = { tabId };
+  const startedAt = Date.now();
+  const requestCountsByRequestId = new Map();
+  const requestKeyByRequestId = new Map();
+  const entriesByKey = new Map();
+  const entries = [];
+  let firstEventTimestamp = null;
+  let detachedError = null;
+
+  const ensureEntry = (requestId, params = {}) => {
+    const rawRequestId = String(requestId || '').trim();
+    if (rawRequestId === '') return null;
+
+    let key = requestKeyByRequestId.get(rawRequestId);
+    if (!key) {
+      const count = (requestCountsByRequestId.get(rawRequestId) || 0) + 1;
+      requestCountsByRequestId.set(rawRequestId, count);
+      key = count === 1 ? rawRequestId : `${rawRequestId}#${count}`;
+      requestKeyByRequestId.set(rawRequestId, key);
+    }
+
+    let entry = entriesByKey.get(key);
+    if (!entry) {
+      entry = {
+        id: key,
+        requestId: rawRequestId,
+        tabId,
+        url: null,
+        method: null,
+        resourceType: null,
+        status: null,
+        statusText: null,
+        mimeType: null,
+        requestHeaders: null,
+        responseHeaders: null,
+        requestBody: null,
+        responseBody: null,
+        responseBodyBase64: false,
+        encodedDataLength: null,
+        fromDiskCache: false,
+        fromServiceWorker: false,
+        redirectedFrom: null,
+        errorText: null,
+        blockedReason: null,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null
+      };
+      entriesByKey.set(key, entry);
+      if (entries.length < maxEntries) {
+        entries.push(entry);
+      }
+    }
+
+    if (params.resourceType && !entry.resourceType) entry.resourceType = String(params.resourceType);
+    return entry;
+  };
+
+  const maybeTrimBody = (body) => {
+    const text = String(body || '');
+    if (text === '') return { body: '', truncated: false };
+    const maxChars = 100000;
+    if (text.length <= maxChars) return { body: text, truncated: false };
+    return { body: text.slice(0, maxChars), truncated: true };
+  };
+
+  const mapEventTimestamp = (timestamp) => {
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts)) return null;
+    if (firstEventTimestamp == null) firstEventTimestamp = ts;
+    return startedAt + Math.max(0, Math.round((ts - firstEventTimestamp) * 1000));
+  };
+
+  const onDetach = (source, reason) => {
+    if (source?.tabId !== tabId) return;
+    detachedError = new Error(`Debugger detached during network capture: ${String(reason || 'unknown')}`);
+  };
+
+  const onEvent = async (source, method, params) => {
+    if (source?.tabId !== tabId) return;
+
+    if (method === 'Network.requestWillBeSent') {
+      const requestId = String(params?.requestId || '');
+      if (params?.redirectResponse) {
+        const previousKey = requestKeyByRequestId.get(requestId);
+        const previousEntry = previousKey ? entriesByKey.get(previousKey) : null;
+        if (previousEntry) {
+          previousEntry.status = Number(params.redirectResponse.status || previousEntry.status || 0) || null;
+          previousEntry.statusText = String(params.redirectResponse.statusText || previousEntry.statusText || '') || null;
+          previousEntry.responseHeaders = normalizeHeaders(params.redirectResponse.headers);
+          previousEntry.mimeType = String(params.redirectResponse.mimeType || previousEntry.mimeType || '') || null;
+          previousEntry.finishedAt = mapEventTimestamp(params.timestamp);
+          previousEntry.durationMs =
+            previousEntry.startedAt != null && previousEntry.finishedAt != null
+              ? Math.max(0, previousEntry.finishedAt - previousEntry.startedAt)
+              : previousEntry.durationMs;
+        }
+        requestKeyByRequestId.delete(requestId);
+      }
+
+      const entry = ensureEntry(requestId, { resourceType: params?.type });
+      if (!entry) return;
+      entry.url = String(params?.request?.url || entry.url || '') || null;
+      entry.method = String(params?.request?.method || entry.method || '') || null;
+      entry.resourceType = String(params?.type || entry.resourceType || '') || null;
+      entry.requestHeaders = normalizeHeaders(params?.request?.headers);
+      entry.requestBody = normalizeOptionalText(params?.request?.postData);
+      entry.startedAt = mapEventTimestamp(params.timestamp);
+      entry.redirectedFrom =
+        params?.redirectResponse && params.redirectResponse.url ? String(params.redirectResponse.url) : entry.redirectedFrom;
+      return;
+    }
+
+    if (method === 'Network.requestWillBeSentExtraInfo') {
+      const entry = ensureEntry(params?.requestId);
+      if (!entry) return;
+      if (entry.requestHeaders == null) {
+        entry.requestHeaders = normalizeHeaders(params?.headers);
+      }
+      return;
+    }
+
+    if (method === 'Network.responseReceived') {
+      const entry = ensureEntry(params?.requestId, { resourceType: params?.type });
+      if (!entry) return;
+      entry.url = String(params?.response?.url || entry.url || '') || null;
+      entry.resourceType = String(params?.type || entry.resourceType || '') || null;
+      entry.status = Number(params?.response?.status || 0) || null;
+      entry.statusText = String(params?.response?.statusText || '') || null;
+      entry.mimeType = String(params?.response?.mimeType || '') || null;
+      entry.responseHeaders = normalizeHeaders(params?.response?.headers);
+      entry.fromDiskCache = params?.response?.fromDiskCache === true;
+      entry.fromServiceWorker = params?.response?.fromServiceWorker === true;
+      return;
+    }
+
+    if (method === 'Network.responseReceivedExtraInfo') {
+      const entry = ensureEntry(params?.requestId);
+      if (!entry) return;
+      entry.status = Number(params?.statusCode || entry.status || 0) || entry.status;
+      if (entry.responseHeaders == null) {
+        entry.responseHeaders = normalizeHeaders(params?.headers);
+      }
+      return;
+    }
+
+    if (method === 'Network.loadingFinished') {
+      const entry = ensureEntry(params?.requestId);
+      if (!entry) return;
+      entry.finishedAt = mapEventTimestamp(params.timestamp);
+      entry.durationMs =
+        entry.startedAt != null && entry.finishedAt != null ? Math.max(0, entry.finishedAt - entry.startedAt) : null;
+      entry.encodedDataLength = Number.isFinite(params?.encodedDataLength) ? Number(params.encodedDataLength) : null;
+      if (includeBodies && entries.includes(entry)) {
+        try {
+          const bodyResult = await debuggerSendCommand(target, 'Network.getResponseBody', {
+            requestId: String(params.requestId)
+          });
+          const trimmed = maybeTrimBody(bodyResult?.body);
+          entry.responseBody = trimmed.body;
+          entry.responseBodyBase64 = bodyResult?.base64Encoded === true;
+          if (trimmed.truncated) {
+            entry.responseBodyTruncated = true;
+          }
+        } catch (_error) {
+          entry.responseBody = null;
+          entry.responseBodyBase64 = false;
+        }
+      }
+      return;
+    }
+
+    if (method === 'Network.loadingFailed') {
+      const entry = ensureEntry(params?.requestId);
+      if (!entry) return;
+      entry.finishedAt = mapEventTimestamp(params.timestamp);
+      entry.durationMs =
+        entry.startedAt != null && entry.finishedAt != null ? Math.max(0, entry.finishedAt - entry.startedAt) : null;
+      entry.errorText = String(params?.errorText || '') || null;
+      entry.blockedReason = String(params?.blockedReason || '') || null;
+    }
+  };
+
+  chrome.debugger.onEvent.addListener(onEvent);
+  chrome.debugger.onDetach.addListener(onDetach);
+
+  await debuggerAttach(target);
+  try {
+    await debuggerSendCommand(target, 'Network.enable', {});
+    if (reload) {
+      await chrome.tabs.reload(tabId);
+    }
+
+    const endAt = Date.now() + durationMs;
+    while (Date.now() < endAt) {
+      if (detachedError) throw detachedError;
+      await delay(Math.min(200, endAt - Date.now()));
+    }
+    if (detachedError) throw detachedError;
+  } finally {
+    chrome.debugger.onEvent.removeListener(onEvent);
+    chrome.debugger.onDetach.removeListener(onDetach);
+    await debuggerDetach(target).catch(() => undefined);
+  }
+
+  const afterTab = await chrome.tabs.get(tabId).catch(() => null);
+  return {
+    targetTabId: tabId,
+    targetTabUrl: (afterTab && afterTab.url) || tab.url || null,
+    durationMs,
+    includeBodies,
+    reload,
+    totalCaptured: entries.length,
+    entries
+  };
 }
 
 async function evaluateInTabWithDebugger(tabId, expression, options = {}) {
@@ -686,6 +962,32 @@ function flattenFrameTree(frameTree, out = []) {
   const children = Array.isArray(frameTree.childFrames) ? frameTree.childFrames : [];
   for (const child of children) flattenFrameTree(child, out);
   return out;
+}
+
+function normalizeHeaders(value) {
+  if (!value || typeof value !== 'object') return null;
+  const headers = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    headers[String(key)] = Array.isArray(rawValue)
+      ? rawValue.map((item) => String(item))
+      : String(rawValue);
+  }
+  return headers;
+}
+
+function normalizeOptionalText(value) {
+  const text = String(value || '');
+  return text === '' ? null : text;
+}
+
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(num)));
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
 function debuggerAttach(target) {

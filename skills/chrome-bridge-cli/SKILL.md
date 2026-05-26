@@ -40,6 +40,7 @@ Bridge flow:
 - `scripts/list_frames.js`
 - `scripts/close_tab.js`
 - `scripts/screenshot.js`
+- `scripts/network.js`
 - `scripts/click.js`
 - `scripts/input.js`
 - `scripts/launch_chrome.sh`
@@ -96,6 +97,20 @@ Read host events:
 ./scripts/chrome-bridge-cli.js --events
 ```
 
+Capture network traffic:
+
+```bash
+./scripts/chrome-bridge-cli.js --capture-network --duration-ms 5000 --reload --target-url-pattern example.com
+```
+
+Include response bodies:
+
+```bash
+./scripts/chrome-bridge-cli.js --capture-network --duration-ms 5000 --reload --include-bodies --target-tab 123456
+```
+
+The capture command returns structured JSON with tab metadata and `entries[]` rows containing request URL, method, resource type, response status, headers, timing, and optional response body fields.
+
 Helper scripts:
 
 ```bash
@@ -104,6 +119,7 @@ node scripts/list_tabs.js
 node scripts/list_frames.js --target-url-pattern google.com
 node scripts/close_tab.js --tab-id 123456
 node scripts/screenshot.js --output /tmp/page.png
+node scripts/network.js --duration-ms 5000 --reload --target-url-pattern example.com
 node scripts/click.js --selector "button[type='submit']"
 node scripts/input.js --selector "input[name='q']" --text "hello world"
 ```
@@ -114,4 +130,7 @@ Screenshot options:
 node scripts/screenshot.js --format jpeg --quality 85
 node scripts/screenshot.js --full-page
 node scripts/screenshot.js --target-url-pattern jianzirumian.xyz --output /tmp/blog.png
+node scripts/network.js --include-bodies --target-tab 123456
 ```
+
+If you change extension files such as `background.js`, `sidepanel.js`, or `manifest.json`, reload the unpacked extension in `chrome://extensions` before testing new CLI commands.
