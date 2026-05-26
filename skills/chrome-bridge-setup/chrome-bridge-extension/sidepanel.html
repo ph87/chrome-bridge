@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chrome Bridge</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="cb-shell">
+      <header class="cb-header">
+        <div class="cb-header-row">
+          <div id="cb-tab-meta" class="cb-tab-meta">Resolving active tab...</div>
+          <div class="cb-header-actions">
+            <button id="cb-view-toggle-btn" class="cb-icon-btn" type="button" title="Open settings" aria-label="Open settings">⚙</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="cb-main">
+        <section id="cb-chat-view" class="cb-view cb-view-active">
+          <div class="cb-chat-toolbar">
+            <div class="cb-toolbar-copy">
+              <div id="cb-active-agent-status" class="cb-status">Agent: -</div>
+              <div id="cb-active-tab-id" class="cb-subtle">Tab: -</div>
+            </div>
+            <button id="cb-reset-chat-btn" class="cb-btn cb-btn-compact" type="button">Clear</button>
+          </div>
+
+          <div id="cb-chat-list" class="cb-chat-list"></div>
+
+          <div class="cb-input-wrap">
+            <div id="cb-textarea-resize-bar" class="cb-textarea-resize-bar" title="Drag to resize message box" aria-hidden="true">
+              <div class="cb-textarea-resize-grip"></div>
+            </div>
+            <textarea id="cb-textarea" class="cb-textarea" placeholder="Ask the selected agent..."></textarea>
+          </div>
+        </section>
+
+        <section id="cb-settings-view" class="cb-view">
+          <div class="cb-settings">
+            <div class="cb-settings-row">
+              <label class="cb-label" for="cb-bridge-mode">Transport</label>
+              <select id="cb-bridge-mode" class="cb-select">
+                <option value="http">HTTP</option>
+                <option value="ipc">IPC (Unix Socket)</option>
+              </select>
+            </div>
+
+            <div id="cb-bridge-host-port-row" class="cb-settings-row">
+              <label class="cb-label" for="cb-bridge-host-port">Host:Port</label>
+              <input id="cb-bridge-host-port" class="cb-input" type="text" placeholder="127.0.0.1:3456" />
+            </div>
+
+            <div id="cb-bridge-socket-path-row" class="cb-settings-row">
+              <label class="cb-label" for="cb-bridge-socket-path">Socket Path</label>
+              <input id="cb-bridge-socket-path" class="cb-input" type="text" readonly placeholder="~/.chrome-bridge/bridge.sock" />
+            </div>
+
+            <div class="cb-settings-row">
+              <label class="cb-label" for="cb-bridge-token">Token</label>
+              <div class="cb-inline-controls">
+                <input id="cb-bridge-token" class="cb-input" type="text" readonly placeholder="token" />
+                <button id="cb-bridge-token-refresh" class="cb-btn" type="button">Refresh</button>
+              </div>
+            </div>
+
+            <div class="cb-settings-head">
+              <label class="cb-label">Agent Configs (single active)</label>
+              <button id="cb-agent-new-btn" class="cb-btn" type="button">New</button>
+            </div>
+
+            <div class="cb-settings-row">
+              <div id="cb-agent-list" class="cb-agent-list"></div>
+            </div>
+
+            <div id="cb-editor" class="cb-editor">
+              <div class="cb-settings-row">
+                <label class="cb-label" for="cb-agent-name">Name</label>
+                <input id="cb-agent-name" class="cb-input" type="text" placeholder="My Agent" />
+              </div>
+
+              <div class="cb-settings-row">
+                <label class="cb-label" for="cb-agent-command">Command</label>
+                <input id="cb-agent-command" class="cb-input" type="text" placeholder="/path/to/bin or command" />
+              </div>
+
+              <div class="cb-settings-row">
+                <label class="cb-label" for="cb-agent-args">Arguments (one per line)</label>
+                <textarea id="cb-agent-args" class="cb-args" placeholder="--flag&#10;value"></textarea>
+              </div>
+
+              <div class="cb-settings-row">
+                <label class="cb-label" for="cb-agent-adapter">Adapter</label>
+                <select id="cb-agent-adapter" class="cb-select"></select>
+              </div>
+
+              <div class="cb-settings-actions">
+                <button id="cb-agent-save-btn" class="cb-btn" type="button">Save</button>
+                <button id="cb-agent-cancel-btn" class="cb-btn" type="button">Cancel</button>
+              </div>
+
+              <div id="cb-settings-status" class="cb-settings-status"></div>
+              <div class="cb-settings-note">Adapter maps: acpRpcAdapter -&gt; acp-rpc, stdioAdapter -&gt; stdio.</div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

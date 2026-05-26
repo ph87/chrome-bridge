@@ -78,7 +78,7 @@ function createAgentBridge({ agentRegistry, onEvent }) {
       throw new Error(`Unsupported agent: ${providedId}`);
     }
 
-    throw new Error('No selected agent. Please choose an agent in sidebar settings.');
+    throw new Error('No selected agent. Please choose an agent in side panel settings.');
   }
 
   function createSession(tabId, resolved) {

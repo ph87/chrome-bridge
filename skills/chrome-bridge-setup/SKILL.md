@@ -22,10 +22,10 @@ Setup creates `~/.chrome-bridge/config.json`:
 {"mode":"http","hostPort":"127.0.0.1:3456","socketPath":"/Users/<user>/.chrome-bridge/bridge.sock","token":"<uuid>"}
 ```
 
-- `mode` is selectable in extension sidebar settings (`http` or `ipc`).
+- `mode` is selectable in extension side panel settings (`http` or `ipc`).
 - `hostPort` is editable in `http` mode.
 - `socketPath` is used in `ipc` mode.
-- `token` is shown in sidebar settings and can be rotated with `Refresh`.
+- `token` is shown in side panel settings and can be rotated with `Refresh`.
 - Any transport config/token change is written back to this file.
 
 ## Package Structure

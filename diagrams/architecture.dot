@@ -46,7 +46,7 @@ digraph chrome_bridge_architecture {
   ];
 
   extension [
-    label="Chrome Extension\n(background.js + sidebar.js)",
+    label="Chrome Extension\n(background.js + sidepanel.js)",
     fillcolor="#dcfce7",
     color="#4ade80"
   ];

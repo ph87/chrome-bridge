@@ -2,11 +2,11 @@
 
 Chrome extension + native host bridge for:
 - running JavaScript on browser tabs from terminal commands
-- opening an in-page chat sidebar (from the extension icon) and relaying chat with native-host managed agents
+- opening a Chrome side panel (from the extension icon) and relaying chat with native-host managed agents
 
 ## Recommended Interaction Model
 
-- Primary path: interact through the in-page chat sidebar and a user-configured agent.
+- Primary path: interact through the side panel and a user-configured agent.
 - Native host is usually driven by agent chat messages from the extension.
 - CLI/scripts are still available, but mostly for debugging, diagnostics, and manual operations.
 
@@ -15,8 +15,8 @@ Chrome extension + native host bridge for:
 1. `chrome-bridge-cli/scripts/chrome-bridge-cli.js` sends requests to `chrome-bridge-setup/native-host/app.js` over HTTP or Unix socket IPC (based on runtime config).
 2. `chrome-bridge-setup/native-host/app.js` forwards tasks through Chrome Native Messaging.
 3. `chrome-bridge-setup/chrome-bridge-extension/background.js` executes JavaScript in tabs and returns results.
-4. Clicking the extension icon injects `chrome-bridge-setup/chrome-bridge-extension/sidebar.js`, which opens a floating chat panel overlay.
-5. Chat messages are relayed through native messaging; native host spawns and manages one agent session per tab.
+4. Clicking the extension icon opens `chrome-bridge-setup/chrome-bridge-extension/sidepanel.html` in Chrome's side panel.
+5. Chat messages are relayed through native messaging; native host spawns and manages one agent session per tab, while the side panel keeps per-tab UI history.
 
 Native host name: `chrome_bridge`
 
@@ -56,15 +56,17 @@ Command examples below are skill-local (portable) paths:
 
 If you run from monorepo root, prefix with the skill path (for example `./skills/chrome-bridge-cli/scripts/...`).
 
-## Chat Sidebar
+## Side Panel
 
-- Click the extension icon on a normal web page to toggle the sidebar.
-- Layout: floating overlay panel (draggable + resizable), without forcing page reflow.
-- Header includes a settings button that opens the settings view.
+- Click the extension icon to open the side panel for the current Chrome window.
+- The UI is extension-owned and is no longer injected into website DOM.
+- Header includes chat and settings tabs.
 - Settings supports multiple agent configs. Only one config can be active at a time.
 - Per-agent actions include `Activate`, `Edit`, and `Delete`.
 - Use `New` (top-right in settings) to add a config.
 - Native host currently keeps one spawned chat process per tab.
+- The side panel follows the active tab in the current window and keeps separate chat history per tab.
+- `Reset Tab Chat` clears the per-tab conversation view and closes the native-host chat session for that tab.
 - Chat commands:
   - `/page <instruction>`: injects current tab context (tab id/url/title) and asks agent to act on that tab.
   - `/help`: shows available chat commands.
@@ -104,7 +106,7 @@ Native host agent integrations are extracted into:
 - `native-host/agents/utils.js` - shared executable/path helpers
 
 To add another agent:
-1. Add config in sidebar settings (command/args/adapter), or provide it via `AGENT_COMMANDS_JSON`.
+1. Add config in side panel settings (command/args/adapter), or provide it via `AGENT_COMMANDS_JSON`.
 2. If a new protocol is needed, add a native adapter under `native-host/agents/adapters/` and register it in `native-host/agents/index.js`.
 
 ## Prerequisites
@@ -158,10 +160,10 @@ Reload the extension after install.
 {"mode":"http","hostPort":"127.0.0.1:3456","socketPath":"/Users/<user>/.chrome-bridge/bridge.sock","token":"<uuid>"}
 ```
 
-- `mode` is `http` or `ipc` and can be switched in sidebar settings.
+- `mode` is `http` or `ipc` and can be switched in side panel settings.
 - `hostPort` is editable only in `http` mode.
 - `socketPath` is used in `ipc` mode and points to the Unix domain socket file.
-- `token` is shown in sidebar settings and can be rotated with `Refresh`.
+- `token` is shown in side panel settings and can be rotated with `Refresh`.
 - Host process validates `Authorization: Bearer <token>` for both HTTP and IPC endpoints.
 - Transport changes trigger an automatic native-host restart so new endpoint settings apply.
 

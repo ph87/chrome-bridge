@@ -1,5 +1,4 @@
 const NATIVE_HOST_NAME = 'chrome_bridge';
-const SIDEBAR_SCRIPT_FILE = 'sidebar.js';
 importScripts('runtime-config.js', 'commands/index.js');
 
 const runtimeConfig = globalThis.ChromeBridgeRuntimeConfig || {};
@@ -16,11 +15,14 @@ let nativePort = null;
 let reconnectTimer = null;
 const persistentChatContextByTabId = new Map();
 const pendingNativeRequestsByTaskId = new Map();
+const sidePanelPorts = new Set();
 
 connectNativeHost();
 chrome.runtime.onStartup.addListener(connectNativeHost);
 chrome.runtime.onInstalled.addListener(connectNativeHost);
 chrome.action.onClicked.addListener(handleActionClick);
+chrome.runtime.onConnect.addListener(handlePortConnect);
+chrome.tabs.onRemoved.addListener(handleTabRemoved);
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleRuntimeMessage(message, sender)
     .then((result) => sendResponse({ ok: true, ...(result || {}) }))
@@ -35,28 +37,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleActionClick(tab) {
   connectNativeHost();
-  const tabId = tab?.id;
-  if (tabId == null) return;
+  const windowId = tab?.windowId;
+  if (windowId == null) return;
 
   try {
-    await ensureSidebarScriptInjected(tabId);
-    await chrome.tabs.sendMessage(tabId, { type: 'bridge_toggle_sidebar' });
+    await chrome.sidePanel.open({ windowId });
   } catch (error) {
-    console.warn('[chrome-bridge] failed to toggle sidebar', error);
+    console.warn('[chrome-bridge] failed to open side panel', error);
   }
 }
 
-async function ensureSidebarScriptInjected(tabId) {
-  try {
-    const pong = await chrome.tabs.sendMessage(tabId, { type: 'bridge_sidebar_ping' });
-    if (pong?.ok) return;
-  } catch (_error) {
-    // Content script is not present yet.
-  }
-
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: [SIDEBAR_SCRIPT_FILE]
+function handlePortConnect(port) {
+  if (!port || port.name !== 'sidepanel') return;
+  sidePanelPorts.add(port);
+  port.onDisconnect.addListener(() => {
+    sidePanelPorts.delete(port);
   });
 }
 
@@ -81,8 +76,9 @@ async function handleRuntimeMessage(message, sender) {
   }
 
   if (message.type === 'bridge_chat_send') {
-    const tabId = sender?.tab?.id;
-    if (tabId == null) throw new Error('Unable to resolve sender tab');
+    const targetTab = await resolveChatTargetTab(message, sender);
+    const tabId = targetTab.id;
+    if (tabId == null) throw new Error('Unable to resolve target tab');
 
     const text = String(message.text || '').trim();
     if (text === '') throw new Error('Message text is empty');
@@ -93,13 +89,13 @@ async function handleRuntimeMessage(message, sender) {
       const commandResult = await globalThis.ChromeBridgeCommands.handle(parsedCommand, {
         tab: {
           id: tabId,
-          url: String(sender?.tab?.url || ''),
-          title: String(sender?.tab?.title || '')
+          url: String(targetTab?.url || ''),
+          title: String(targetTab?.title || '')
         },
         agentId: agentSelection.agentId,
         agentSpec: agentSelection.agentSpec,
         sendToNative: sendNative,
-        forwardEvent: (event) => forwardChatEventToTab(tabId, event)
+        forwardEvent: (event) => forwardChatEventToSidePanels(tabId, event)
       });
       if (hasPersistPrefix(commandResult?.persistContext)) {
         persistentChatContextByTabId.set(tabId, {
@@ -116,12 +112,12 @@ async function handleRuntimeMessage(message, sender) {
       const autoCtx = globalThis.ChromeBridgeCommands.getAutoPersistContext({
         tab: {
           id: tabId,
-          url: String(sender?.tab?.url || ''),
-          title: String(sender?.tab?.title || '')
+          url: String(targetTab?.url || ''),
+          title: String(targetTab?.title || '')
         },
         agentId,
         sendToNative: sendNative,
-        forwardEvent: (event) => forwardChatEventToTab(tabId, event)
+        forwardEvent: (event) => forwardChatEventToSidePanels(tabId, event)
       });
       if (hasPersistPrefix(autoCtx)) {
         persistentCtx = {
@@ -146,7 +142,7 @@ async function handleRuntimeMessage(message, sender) {
   }
 
   if (message.type === 'bridge_chat_close') {
-    const tabId = sender?.tab?.id;
+    const tabId = await resolveMessageTabId(message, sender);
     if (tabId == null) return { closed: false };
     persistentChatContextByTabId.delete(tabId);
 
@@ -158,6 +154,26 @@ async function handleRuntimeMessage(message, sender) {
   }
 
   throw new Error(`Unsupported message type: ${String(message.type || '')}`);
+}
+
+async function resolveChatTargetTab(message, sender) {
+  const tabId = await resolveMessageTabId(message, sender);
+  if (tabId == null) throw new Error('Missing target tab id');
+
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || tab.id == null) {
+    throw new Error(`Target tab not found: ${tabId}`);
+  }
+  return tab;
+}
+
+async function resolveMessageTabId(message, sender) {
+  const requestedTabId = Number(message?.tabId);
+  if (Number.isFinite(requestedTabId)) return requestedTabId;
+
+  const senderTabId = sender?.tab?.id;
+  if (senderTabId != null) return senderTabId;
+  return null;
 }
 
 function connectNativeHost() {
@@ -565,30 +581,33 @@ async function handleCaptureScreenshot(payload) {
 }
 
 async function handleChatEvent(message) {
-  const tabId = Number(message?.tabId);
-  if (!Number.isFinite(tabId)) return;
+  forwardChatEventToSidePanels(Number(message?.tabId), message);
+}
 
-  try {
-    await ensureSidebarScriptInjected(tabId);
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'bridge_chat_event',
-      event: message
-    });
-  } catch (error) {
-    console.warn('[chrome-bridge] unable to forward chat event', error);
+function forwardChatEventToSidePanels(tabId, event) {
+  if (!Number.isFinite(tabId)) return;
+  const payload = {
+    type: 'bridge_chat_event',
+    event: {
+      ...event,
+      tabId
+    }
+  };
+  for (const panelPort of sidePanelPorts) {
+    try {
+      panelPort.postMessage(payload);
+    } catch (error) {
+      console.warn('[chrome-bridge] unable to deliver chat event to side panel', error);
+    }
   }
 }
 
-async function forwardChatEventToTab(tabId, event) {
-  try {
-    await ensureSidebarScriptInjected(tabId);
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'bridge_chat_event',
-      event
-    });
-  } catch (error) {
-    console.warn('[chrome-bridge] unable to deliver local chat command event', error);
-  }
+function handleTabRemoved(tabId) {
+  persistentChatContextByTabId.delete(tabId);
+  sendNative({
+    type: 'chat_close',
+    tabId
+  });
 }
 
 async function evaluateInTabWithDebugger(tabId, expression, options = {}) {
