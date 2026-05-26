@@ -60,13 +60,13 @@ If you run from monorepo root, prefix with the skill path (for example `./skills
 
 - Click the extension icon to open the side panel for the current Chrome window.
 - The UI is extension-owned and is no longer injected into website DOM.
-- Header includes chat and settings tabs.
+- Header includes a single toggle icon that switches between chat and settings.
 - Settings supports multiple agent configs. Only one config can be active at a time.
 - Per-agent actions include `Activate`, `Edit`, and `Delete`.
 - Use `New` (top-right in settings) to add a config.
 - Native host currently keeps one spawned chat process per tab.
 - The side panel follows the active tab in the current window and keeps separate chat history per tab.
-- `Reset Tab Chat` clears the per-tab conversation view and closes the native-host chat session for that tab.
+- `Clear` clears the per-tab conversation view and closes the native-host chat session for that tab.
 - Chat commands:
   - `/page <instruction>`: injects current tab context (tab id/url/title) and asks agent to act on that tab.
   - `/help`: shows available chat commands.
